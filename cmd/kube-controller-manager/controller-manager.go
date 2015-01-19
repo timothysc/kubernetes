@@ -26,8 +26,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
+	//"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
+	//"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider"
 	nodeControllerPkg "github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider/controller"
@@ -48,31 +48,32 @@ var (
 	clientConfig    = &client.Config{}
 	cloudProvider   = flag.String("cloud_provider", "", "The provider for cloud services.  Empty string for no provider.")
 	cloudConfigFile = flag.String("cloud_config", "", "The path to the cloud provider configuration file.  Empty string for no configuration file.")
-	minionRegexp    = flag.String("minion_regexp", "", "If non empty, and -cloud_provider is specified, a regular expression for matching minion VMs.")
-	machineList     util.StringList
+	minionRegexp    = flag.String("minion_regexp", "*", "If non empty, and -cloud_provider is specified, a regular expression for matching minion VMs.")
+	// whiteList       util.StringList
+	// machineList     util.StringList
 	// TODO: Discover these by pinging the host machines, and rip out these flags.
 	// TODO: in the meantime, use resource.QuantityFlag() instead of these
-	nodeMilliCPU = flag.Int64("node_milli_cpu", 1000, "The amount of MilliCPU provisioned on each node")
-	nodeMemory   = resource.QuantityFlag("node_memory", "3Gi", "The amount of memory (in bytes) provisioned on each node")
+	// nodeMilliCPU = flag.Int64("node_milli_cpu", 1000, "The amount of MilliCPU provisioned on each node")
+	// nodeMemory   = resource.QuantityFlag("node_memory", "3Gi", "The amount of memory (in bytes) provisioned on each node")
 )
 
 func init() {
 	flag.Var(&address, "address", "The IP address to serve on (set to 0.0.0.0 for all interfaces)")
-	flag.Var(&machineList, "machines", "List of machines to schedule onto, comma separated.")
+	//flag.Var(&machineList, "machines", "List of machines to schedule onto, comma separated.")
 	client.BindClientConfigFlags(flag.CommandLine, clientConfig)
 }
 
-func verifyMinionFlags() {
+/*func verifyMinionFlags() {
 	if *cloudProvider == "" || *minionRegexp == "" {
-		if len(machineList) == 0 {
-			glog.Info("No machines specified!")
-		}
+		//if len(machineList) == 0 {
+		//	glog.Info("No machines specified!")
+		//}
 		return
 	}
-	if len(machineList) != 0 {
-		glog.Info("-machines is overwritten by -minion_regexp")
-	}
-}
+	// if len(machineList) != 0 {
+	//	glog.Info("-machines is overwritten by -minion_regexp")
+	// }
+}*/
 
 func main() {
 	util.InitFlags()
@@ -80,7 +81,7 @@ func main() {
 	defer util.FlushLogs()
 
 	verflag.PrintAndExitIfRequested()
-	verifyMinionFlags()
+	//verifyMinionFlags()
 
 	if len(clientConfig.Host) == 0 {
 		glog.Fatal("usage: controller-manager -master <master>")
@@ -100,13 +101,14 @@ func main() {
 	controllerManager.Run(10 * time.Second)
 
 	cloud := cloudprovider.InitCloudProvider(*cloudProvider, *cloudConfigFile)
-	nodeResources := &api.NodeResources{
-		Capacity: api.ResourceList{
-			api.ResourceCPU:    *resource.NewMilliQuantity(*nodeMilliCPU, resource.DecimalSI),
-			api.ResourceMemory: *nodeMemory,
-		},
-	}
-	nodeController := nodeControllerPkg.NewNodeController(cloud, *minionRegexp, machineList, nodeResources, kubeClient)
+	//nodeResources := &api.NodeResources{
+	//	Capacity: api.ResourceList{
+	//		api.ResourceCPU:    *resource.NewMilliQuantity(*nodeMilliCPU, resource.DecimalSI),
+	//		api.ResourceMemory: *nodeMemory,
+	//	},
+	//}
+	// nodeController := nodeControllerPkg.NewNodeController(cloud, *minionRegexp, machineList, nodeResources, kubeClient)
+	nodeController := nodeControllerPkg.NewNodeController(cloud, *minionRegexp, kubeClient)
 	nodeController.Run(10 * time.Second)
 
 	select {}

@@ -18,7 +18,7 @@ package controller
 
 import (
 	"fmt"
-	"net"
+	//"net"
 	"time"
 
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
@@ -31,8 +31,8 @@ import (
 type NodeController struct {
 	cloud           cloudprovider.Interface
 	matchRE         string
-	staticResources *api.NodeResources
-	nodes           []string
+	// staticResources *api.NodeResources
+	// nodes           []string
 	kubeClient      client.Interface
 }
 
@@ -40,14 +40,14 @@ type NodeController struct {
 func NewNodeController(
 	cloud cloudprovider.Interface,
 	matchRE string,
-	nodes []string,
-	staticResources *api.NodeResources,
+	//nodes []string,
+	//staticResources *api.NodeResources,
 	kubeClient client.Interface) *NodeController {
 	return &NodeController{
 		cloud:           cloud,
 		matchRE:         matchRE,
-		nodes:           nodes,
-		staticResources: staticResources,
+		//nodes:           nodes,
+		//staticResources: staticResources,
 		kubeClient:      kubeClient,
 	}
 }
@@ -61,13 +61,14 @@ func (s *NodeController) Run(period time.Duration) {
 			}
 		}, period)
 	} else {
-		go s.SyncStatic(period)
+		// TODO: tstclair 
+		// go s.SyncStatic(period)
 	}
 }
 
 // SyncStatic registers list of machines from command line flag. It returns after successful
 // registration of all machines.
-func (s *NodeController) SyncStatic(period time.Duration) error {
+/*func (s *NodeController) SyncStatic(period time.Duration) error {
 	registered := util.NewStringSet()
 	for {
 		for _, nodeID := range s.nodes {
@@ -103,7 +104,7 @@ func (s *NodeController) SyncStatic(period time.Duration) error {
 		}
 		time.Sleep(period)
 	}
-}
+}*/
 
 // SyncCloud syncs list of instances from cloudprovider to master etcd registry.
 func (s *NodeController) SyncCloud() error {
@@ -167,9 +168,9 @@ func (s *NodeController) cloudNodes() (*api.NodeList, error) {
 		if err != nil {
 			return nil, err
 		}
-		if resources == nil {
-			resources = s.staticResources
-		}
+		//if resources == nil {
+		//	resources = s.staticResources
+		//}
 		if resources != nil {
 			result.Items[i].Spec.Capacity = resources.Capacity
 		}

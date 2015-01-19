@@ -184,8 +184,9 @@ func startComponents(manifestURL string) (apiServerURL string) {
 	// test is over. (Hopefully we don't take 10 minutes!)
 	controllerManager.Run(10 * time.Minute)
 
-	nodeResources := &api.NodeResources{}
-	nodeController := nodeControllerPkg.NewNodeController(nil, "", machineList, nodeResources, cl)
+	// nodeResources := &api.NodeResources{}
+	// nodeController := nodeControllerPkg.NewNodeController(nil, "", machineList, nodeResources, cl)
+	nodeController := nodeControllerPkg.NewNodeController(nil, "", cl)
 	nodeController.Run(10 * time.Second)
 
 	// Kubelet (localhost)

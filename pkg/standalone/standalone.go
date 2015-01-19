@@ -23,8 +23,8 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
+	//"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
+	//"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/apiserver"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
 
@@ -126,14 +126,17 @@ func RunScheduler(cl *client.Client) {
 }
 
 // RunControllerManager starts a controller
+//func RunControllerManager(machineList []string, cl *client.Client, nodeMilliCPU, nodeMemory int64) {
 func RunControllerManager(machineList []string, cl *client.Client, nodeMilliCPU, nodeMemory int64) {
-	nodeResources := &api.NodeResources{
+	/*nodeResources := &api.NodeResources{
 		Capacity: api.ResourceList{
 			api.ResourceCPU:    *resource.NewMilliQuantity(nodeMilliCPU, resource.DecimalSI),
 			api.ResourceMemory: *resource.NewQuantity(nodeMemory, resource.BinarySI),
 		},
 	}
-	nodeController := nodeControllerPkg.NewNodeController(nil, "", machineList, nodeResources, cl)
+	nodeController := nodeControllerPkg.NewNodeController(nil, "", machineList, nodeResources, cl)*/
+
+	nodeController := nodeControllerPkg.NewNodeController(nil, "", cl)
 	nodeController.Run(10 * time.Second)
 
 	endpoints := service.NewEndpointController(cl)
