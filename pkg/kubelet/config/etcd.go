@@ -19,20 +19,36 @@ package config
 
 import (
 	"errors"
+	"os"
 	"path"
 	"time"
 
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
+        "github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/latest"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
 	"github.com/GoogleCloudPlatform/kubernetes/pkg/watch"
 	"github.com/golang/glog"
+
+	flag "github.com/spf13/pflag"
 )
+
+var (
+   nodeMilliCPU = flag.Int64("node_milli_cpu", 2000, "The amount of MilliCPU provisioned on each node")
+   nodeMemory   = resource.QuantityFlag("node_memory", "4Gi", "The amount of memory (in bytes) provisioned on each node")
+)
+
 
 func EtcdKeyForHost(hostname string) string {
 	return path.Join("/", "registry", "nodes", hostname, "boundpods")
+}
+
+
+func EtcdCheckinKey() string {
+	hostname,_ := os.Hostname()
+	return path.Join("/", "registry", "minions", hostname)
 }
 
 type sourceEtcd struct {
@@ -59,6 +75,43 @@ func NewSourceEtcd(key string, client tools.EtcdClient, updates chan<- interface
 
 func (s *sourceEtcd) run() {
 	boundPods := api.BoundPods{}
+
+	// TODO: Make checkin times be a variable
+	periodicCheckin := time.NewTicker(time.Second * 2)
+	defer periodicCheckin.Stop()
+	go func() {
+
+		// TODO get real stats from cadvisor.
+		
+		hostname,_ := os.Hostname()
+		nodeResources := &api.NodeResources{
+					Capacity: api.ResourceList{
+						api.ResourceCPU:    *resource.NewMilliQuantity(*nodeMilliCPU, resource.DecimalSI),
+						api.ResourceMemory: *nodeMemory,
+					},
+				}
+
+
+		node := &api.Node{
+			          ObjectMeta: api.ObjectMeta{Name: hostname},
+			          Spec: api.NodeSpec{
+					   Capacity: nodeResources.Capacity,
+				  },
+			}
+
+		testkey := EtcdCheckinKey()
+		
+		for t := range periodicCheckin.C {
+			err := s.helper.CreateObj(testkey, node, 3)
+			if err != nil {
+				glog.Errorf("etcd failed to iretrieve the value for the key %q. Error: %v", testkey, err)
+			} else {
+			    glog.Infof("periodicCheckin checkin",t)
+			}
+
+		}
+	}()
+
 	err := s.helper.ExtractObj(s.key, &boundPods, false)
 	if err != nil {
 		glog.Errorf("etcd failed to retrieve the value for the key %q. Error: %v", s.key, err)
