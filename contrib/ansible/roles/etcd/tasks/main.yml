@@ -8,6 +8,11 @@
     - restart etcd
   when: not is_atomic
 
+- name: Clean etcd data directory
+  shell: rm -rf {{ etcd_data_dir }}/*
+  notify:
+    - restart etcd
+
 - name: Write etcd config file
   template: src=etcd.conf.j2 dest=/etc/etcd/etcd.conf
   notify:
