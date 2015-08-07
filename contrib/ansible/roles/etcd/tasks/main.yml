@@ -8,11 +8,6 @@
     - restart etcd
   when: not is_atomic
 
-- name: Clean etcd data directory
-  shell: rm -rf {{ etcd_data_dir }}/*
-  notify:
-    - restart etcd
-
 - name: Write etcd config file
   template: src=etcd.conf.j2 dest=/etc/etcd/etcd.conf
   notify:
@@ -31,6 +26,17 @@
 - name: Start etcd
   service: name=etcd state=started
   register: etcd_started
+
+- name: Update {{ etcd_script_dir }} if this is atomic
+  set_fact:
+     etcd_script_dir: "/usr/local/libexec/etcd"
+  when: is_atomic
+
+- name: Create etcd script directory
+  file: path={{ etcd_script_dir }} state=directory
+
+- name: overwrite setup-etcd.sh from local copy
+  copy: src=setup-etcd.sh dest={{ etcd_script_dir }} mode=0500
 
 - include: firewalld.yml
   when: has_firewalld
