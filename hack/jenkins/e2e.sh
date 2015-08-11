@@ -105,6 +105,7 @@ GCE_PARALLEL_SKIP_TESTS=(
     "Nodes\sNetwork"
     "Nodes\sResize"
     "MaxPods"
+    "SchedulerPredicates"
     "Services.*restarting"
     "Shell.*services"
     )
@@ -326,6 +327,13 @@ if [[ "${E2E_UP,,}" == "true" || "${JENKINS_FORCE_GET_TARS:-}" =~ ^[yY]$ ]]; the
             bucket="${varr[0]}"
             githash="${varr[1]}"
             echo "$bucket / $githash"
+        elif [[ ${JENKINS_USE_SERVER_VERSION:-}  =~ ^[yY]$ ]]; then
+            # for GKE we can use server default version.
+            bucket="release"
+            msg=$(gcloud ${CMD_GROUP} container get-server-config --project=${PROJECT} --zone=${ZONE} | grep defaultClusterVersion)
+            # msg will look like "defaultClusterVersion: 1.0.1". Strip
+            # everything up to, including ": "
+            githash="v${msg##*: }"
         else
             # The "ci" bucket is for builds like "v0.15.0-468-gfa648c1"
             bucket="ci"

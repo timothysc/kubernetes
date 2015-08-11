@@ -36,7 +36,7 @@ Documentation for other releases can be found at
 Objects of type `secret` are intended to hold sensitive information, such as
 passwords, OAuth tokens, and ssh keys.  Putting this information in a `secret`
 is safer and more flexible than putting it verbatim in a `pod` definition or in
-a docker image. See [Secrets design document](../design/secrets.md) for more information. 
+a docker image. See [Secrets design document](../design/secrets.md) for more information.
 
 **Table of Contents**
 <!-- BEGIN MUNGE: GENERATED_TOC -->
@@ -165,7 +165,7 @@ Use of imagePullSecrets is desribed in the [images documentation](images.md#spec
 ### Automatic use of Manually Created Secrets
 
 *This feature is planned but not implemented.  See [issue
-9902](https://github.com/GoogleCloudPlatform/kubernetes/issues/9902).*
+9902](http://issue.k8s.io/9902).*
 
 You can reference manually created secrets from a [service account](service-accounts.md).
 Then, pods which use that service account will have

@@ -30,18 +30,22 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/admission"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/apiserver"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/capabilities"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/master"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/master/ports"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	forked "github.com/GoogleCloudPlatform/kubernetes/third_party/forked/coreos/go-etcd/etcd"
 	systemd "github.com/coreos/go-systemd/daemon"
+	"k8s.io/kubernetes/pkg/admission"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/latest"
+	"k8s.io/kubernetes/pkg/api/meta"
+	"k8s.io/kubernetes/pkg/apiserver"
+	"k8s.io/kubernetes/pkg/capabilities"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/cloudprovider"
+	explatest "k8s.io/kubernetes/pkg/expapi/latest"
+	"k8s.io/kubernetes/pkg/master"
+	"k8s.io/kubernetes/pkg/master/ports"
+	"k8s.io/kubernetes/pkg/storage"
+	"k8s.io/kubernetes/pkg/tools"
+	"k8s.io/kubernetes/pkg/util"
+	forked "k8s.io/kubernetes/third_party/forked/coreos/go-etcd/etcd"
 
 	"github.com/coreos/go-etcd/etcd"
 	"github.com/golang/glog"
@@ -70,7 +74,9 @@ type APIServer struct {
 	TLSPrivateKeyFile          string
 	CertDirectory              string
 	APIPrefix                  string
+	ExpAPIPrefix               string
 	StorageVersion             string
+	ExpStorageVersion          string
 	CloudProvider              string
 	CloudConfigFile            string
 	EventTTL                   time.Duration
@@ -83,10 +89,10 @@ type APIServer struct {
 	AuthorizationPolicyFile    string
 	AdmissionControl           string
 	AdmissionControlConfigFile string
-	EtcdServerList             util.StringList
+	EtcdServerList             []string
 	EtcdConfigFile             string
 	EtcdPathPrefix             string
-	CorsAllowedOriginList      util.StringList
+	CorsAllowedOriginList      []string
 	AllowPrivileged            bool
 	ServiceClusterIPRange      util.IPNet // TODO: make this a list
 	ServiceNodePortRange       util.PortRange
@@ -114,6 +120,7 @@ func NewAPIServer() *APIServer {
 		APIRate:                10.0,
 		APIBurst:               200,
 		APIPrefix:              "/api",
+		ExpAPIPrefix:           "/experimental",
 		EventTTL:               1 * time.Hour,
 		AuthorizationMode:      "AlwaysAllow",
 		AdmissionControl:       "AlwaysAdmit",
@@ -171,6 +178,7 @@ func (s *APIServer) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.CertDirectory, "cert-dir", s.CertDirectory, "The directory where the TLS certs are located (by default /var/run/kubernetes). "+
 		"If --tls-cert-file and --tls-private-key-file are provided, this flag will be ignored.")
 	fs.StringVar(&s.APIPrefix, "api-prefix", s.APIPrefix, "The prefix for API requests on the server. Default '/api'.")
+	fs.StringVar(&s.ExpAPIPrefix, "experimental-prefix", s.ExpAPIPrefix, "The prefix for experimental API requests on the server. Default '/experimental'.")
 	fs.StringVar(&s.StorageVersion, "storage-version", s.StorageVersion, "The version to store resources with. Defaults to server preferred")
 	fs.StringVar(&s.CloudProvider, "cloud-provider", s.CloudProvider, "The provider for cloud services.  Empty string for no provider.")
 	fs.StringVar(&s.CloudConfigFile, "cloud-config", s.CloudConfigFile, "The path to the cloud provider configuration file.  Empty string for no configuration file.")
@@ -184,10 +192,10 @@ func (s *APIServer) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.AuthorizationPolicyFile, "authorization-policy-file", s.AuthorizationPolicyFile, "File with authorization policy in csv format, used with --authorization-mode=ABAC, on the secure port.")
 	fs.StringVar(&s.AdmissionControl, "admission-control", s.AdmissionControl, "Ordered list of plug-ins to do admission control of resources into cluster. Comma-delimited list of: "+strings.Join(admission.GetPlugins(), ", "))
 	fs.StringVar(&s.AdmissionControlConfigFile, "admission-control-config-file", s.AdmissionControlConfigFile, "File with admission control configuration.")
-	fs.Var(&s.EtcdServerList, "etcd-servers", "List of etcd servers to watch (http://ip:port), comma separated. Mutually exclusive with -etcd-config")
+	fs.StringSliceVar(&s.EtcdServerList, "etcd-servers", s.EtcdServerList, "List of etcd servers to watch (http://ip:port), comma separated. Mutually exclusive with -etcd-config")
 	fs.StringVar(&s.EtcdConfigFile, "etcd-config", s.EtcdConfigFile, "The config file for the etcd client. Mutually exclusive with -etcd-servers.")
 	fs.StringVar(&s.EtcdPathPrefix, "etcd-prefix", s.EtcdPathPrefix, "The prefix for all resource paths in etcd.")
-	fs.Var(&s.CorsAllowedOriginList, "cors-allowed-origins", "List of allowed origins for CORS, comma separated.  An allowed origin can be a regular expression to support subdomain matching.  If this list is empty CORS will not be enabled.")
+	fs.StringSliceVar(&s.CorsAllowedOriginList, "cors-allowed-origins", s.CorsAllowedOriginList, "List of allowed origins for CORS, comma separated.  An allowed origin can be a regular expression to support subdomain matching.  If this list is empty CORS will not be enabled.")
 	fs.BoolVar(&s.AllowPrivileged, "allow-privileged", s.AllowPrivileged, "If true, allow privileged containers.")
 	fs.Var(&s.ServiceClusterIPRange, "service-cluster-ip-range", "A CIDR notation IP range from which to assign service cluster IPs. This must not overlap with any IP ranges assigned to nodes for pods.")
 	fs.Var(&s.ServiceClusterIPRange, "portal-net", "Deprecated: see --service-cluster-ip-range instead.")
@@ -216,7 +224,7 @@ func (s *APIServer) verifyClusterIPFlags() {
 	}
 }
 
-func newEtcd(etcdConfigFile string, etcdServerList util.StringList, storageVersion string, pathPrefix string) (etcdStorage tools.StorageInterface, err error) {
+func newEtcd(etcdConfigFile string, etcdServerList []string, interfacesFunc meta.VersionInterfacesFunc, defaultVersion, storageVersion, pathPrefix string) (etcdStorage storage.Interface, err error) {
 	var client tools.EtcdClient
 	if etcdConfigFile != "" {
 		client, err = etcd.NewClientFromFile(etcdConfigFile)
@@ -236,7 +244,10 @@ func newEtcd(etcdConfigFile string, etcdServerList util.StringList, storageVersi
 		client = etcdClient
 	}
 
-	return master.NewEtcdStorage(client, storageVersion, pathPrefix)
+	if storageVersion == "" {
+		storageVersion = defaultVersion
+	}
+	return master.NewEtcdStorage(client, interfacesFunc, storageVersion, pathPrefix)
 }
 
 // Run runs the specified APIServer.  This should never exit.
@@ -291,6 +302,10 @@ func (s *APIServer) Run(_ []string) error {
 	disableV1 := disableAllAPIs
 	disableV1 = !s.getRuntimeConfigValue("api/v1", !disableV1)
 
+	// "experimental/v1={true|false} allows users to enable/disable the experimental API.
+	// This takes preference over api/all, if specified.
+	enableExp := s.getRuntimeConfigValue("experimental/v1", false)
+
 	// TODO: expose same flags as client.BindClientConfigFlags but for a server
 	clientConfig := &client.Config{
 		Host:    net.JoinHostPort(s.InsecureBindAddress.String(), strconv.Itoa(s.InsecurePort)),
@@ -301,9 +316,13 @@ func (s *APIServer) Run(_ []string) error {
 		glog.Fatalf("Invalid server address: %v", err)
 	}
 
-	etcdStorage, err := newEtcd(s.EtcdConfigFile, s.EtcdServerList, s.StorageVersion, s.EtcdPathPrefix)
+	etcdStorage, err := newEtcd(s.EtcdConfigFile, s.EtcdServerList, latest.InterfacesFor, latest.Version, s.StorageVersion, s.EtcdPathPrefix)
 	if err != nil {
 		glog.Fatalf("Invalid storage version or misconfigured etcd: %v", err)
+	}
+	expEtcdStorage, err := newEtcd(s.EtcdConfigFile, s.EtcdServerList, explatest.InterfacesFor, explatest.Version, s.ExpStorageVersion, s.EtcdPathPrefix)
+	if err != nil {
+		glog.Fatalf("Invalid experimental storage version or misconfigured etcd: %v", err)
 	}
 
 	n := net.IPNet(s.ServiceClusterIPRange)
@@ -359,7 +378,9 @@ func (s *APIServer) Run(_ []string) error {
 		}
 	}
 	config := &master.Config{
-		DatabaseStorage:        etcdStorage,
+		DatabaseStorage:    etcdStorage,
+		ExpDatabaseStorage: expEtcdStorage,
+
 		EventTTL:               s.EventTTL,
 		KubeletClient:          kubeletClient,
 		ServiceClusterIPRange:  &n,
@@ -370,6 +391,7 @@ func (s *APIServer) Run(_ []string) error {
 		EnableProfiling:        s.EnableProfiling,
 		EnableIndex:            true,
 		APIPrefix:              s.APIPrefix,
+		ExpAPIPrefix:           s.ExpAPIPrefix,
 		CorsAllowedOriginList:  s.CorsAllowedOriginList,
 		ReadWritePort:          s.SecurePort,
 		PublicAddress:          net.IP(s.AdvertiseAddress),
@@ -378,6 +400,7 @@ func (s *APIServer) Run(_ []string) error {
 		Authorizer:             authorizer,
 		AdmissionControl:       admissionController,
 		DisableV1:              disableV1,
+		EnableExp:              enableExp,
 		MasterServiceNamespace: s.MasterServiceNamespace,
 		ClusterName:            s.ClusterName,
 		ExternalHost:           s.ExternalHost,

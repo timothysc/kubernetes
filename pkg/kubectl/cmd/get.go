@@ -20,11 +20,10 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubectl"
-	cmdutil "github.com/GoogleCloudPlatform/kubernetes/pkg/kubectl/cmd/util"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubectl/resource"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/watch"
+	"k8s.io/kubernetes/pkg/kubectl"
+	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
+	"k8s.io/kubernetes/pkg/kubectl/resource"
+	"k8s.io/kubernetes/pkg/watch"
 
 	"github.com/spf13/cobra"
 )
@@ -32,10 +31,10 @@ import (
 const (
 	get_long = `Display one or many resources.
 
-Possible resources include (case insensitive): pods (po), services (svc),
+Possible resource types include (case insensitive): pods (po), services (svc),
 replicationcontrollers (rc), nodes (no), events (ev), componentstatuses (cs),
 limitranges (limits), persistentvolumes (pv), persistentvolumeclaims (pvc),
-resourcequotas (quota) or secrets.
+resourcequotas (quota), namespaces (ns), endpoints (ep) or secrets.
 
 By specifying the output as 'template' and providing a Go template as the value
 of the --template flag, you can filter the attributes of the fetched resource(s).`
@@ -68,7 +67,7 @@ func NewCmdGet(f *cmdutil.Factory, out io.Writer) *cobra.Command {
 	validArgs := p.HandledResources()
 
 	cmd := &cobra.Command{
-		Use:     "get [(-o|--output=)json|yaml|template|wide|...] (RESOURCE [NAME] | RESOURCE/NAME ...)",
+		Use:     "get [(-o|--output=)json|yaml|template|wide|...] (TYPE [(NAME | -l label] | TYPE/NAME ...)",
 		Short:   "Display one or many resources",
 		Long:    get_long,
 		Example: get_example,
@@ -83,7 +82,7 @@ func NewCmdGet(f *cmdutil.Factory, out io.Writer) *cobra.Command {
 	cmd.Flags().BoolP("watch", "w", false, "After listing/getting the requested object, watch for changes.")
 	cmd.Flags().Bool("watch-only", false, "Watch for changes to the requested object(s), without listing/getting first.")
 	cmd.Flags().Bool("all-namespaces", false, "If present, list the requested object(s) across all namespaces. Namespace in current context is ignored even if specified with --namespace.")
-	kubectl.AddLabelsToColumnsFlag(cmd, &util.StringList{}, "Accepts a comma separated list of labels that are going to be presented as columns. Names are case-sensitive. You can also use multiple flag statements like -L label1 -L label2...")
+	cmd.Flags().StringSliceP("label-columns", "L", []string{}, "Accepts a comma separated list of labels that are going to be presented as columns. Names are case-sensitive. You can also use multiple flag statements like -L label1 -L label2...")
 	return cmd
 }
 
@@ -100,7 +99,9 @@ func RunGet(f *cmdutil.Factory, out io.Writer, cmd *cobra.Command, args []string
 	}
 
 	if len(args) == 0 {
-		fmt.Fprint(out, "You must specify the type of resource to get. ", valid_resources)
+		fmt.Fprint(out, "You must specify the type of resource to get. ", valid_resources, `   * componentstatuses (aka 'cs')
+   * endpoints (aka 'ep')
+`)
 		return cmdutil.UsageError(cmd, "Required resource not specified.")
 	}
 

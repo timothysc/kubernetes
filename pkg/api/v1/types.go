@@ -17,10 +17,10 @@ limitations under the License.
 package v1
 
 import (
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/types"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/api/resource"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 // Common string formats
@@ -704,6 +704,11 @@ type Container struct {
 	ImagePullPolicy PullPolicy `json:"imagePullPolicy,omitempty" description:"image pull policy; one of Always, Never, IfNotPresent; defaults to Always if :latest tag is specified, or IfNotPresent otherwise; cannot be updated; see http://releases.k8s.io/HEAD/docs/user-guide/images.md#updating-images"`
 	// Optional: SecurityContext defines the security options the pod should be run with
 	SecurityContext *SecurityContext `json:"securityContext,omitempty" description:"security options the pod should run with; see http://releases.k8s.io/HEAD/docs/design/security_context.md"`
+
+	// Variables for interactive containers, these have very specialized use-cases (e.g. debugging)
+	// and shouldn't be used for general purpose containers.
+	Stdin bool `json:"stdin,omitempty" description:"Whether this container should allocate a buffer for stdin in the container runtime; default is false"`
+	TTY   bool `json:"tty,omitempty" description:"Whether this container should allocate a TTY for itself, also requires 'stdin' to be true; default is false"`
 }
 
 // Handler defines a specific action that should be taken
@@ -1021,6 +1026,54 @@ type ReplicationControllerList struct {
 	ListMeta `json:"metadata,omitempty" description:"standard list metadata; see http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata"`
 
 	Items []ReplicationController `json:"items" description:"list of replication controllers; see http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md"`
+}
+
+// DaemonSpec is the specification of a daemon.
+type DaemonSpec struct {
+	// Selector is a label query over pods that are managed by the daemon.
+	Selector map[string]string `json:"selector,omitempty" description:"label keys and values that must match in order to be controlled by this daemon, if empty defaulted to labels on Pod template; see http://releases.k8s.io/HEAD/docs/user-guide/labels.md#label-selectors"`
+
+	// Template is the object that describes the pod that will be created.
+	// The Daemon will create exactly one copy of this pod on every node
+	// that matches the template's node selector (or on every node if no node
+	// selector is specified).
+	Template *PodTemplateSpec `json:"template,omitempty" description:"object that describes the pod that will be created by this daemon; see http://releases.k8s.io/HEAD/docs/user-guide/replication-controller.md#pod-template"`
+}
+
+// DaemonStatus represents the current status of a daemon.
+type DaemonStatus struct {
+	// CurrentNumberScheduled is the number of nodes that are running exactly 1 copy of the
+	// daemon and are supposed to run the daemon.
+	CurrentNumberScheduled int `json:"currentNumberScheduled" description:"number of nodes that are running exactly 1 copy of the daemon and are supposed to run the daemon"`
+
+	// NumberMisscheduled is the number of nodes that are running the daemon, but are
+	// not supposed to run the daemon.
+	NumberMisscheduled int `json:"numberMisscheduled" description:"number of nodes that are running the Daemon, but are not supposed to run the daemon"`
+
+	// DesiredNumberScheduled is the total number of nodes that should be running the daemon
+	// (including nodes correctly running the daemon).
+	DesiredNumberScheduled int `json:"desiredNumberScheduled" description:"total number of nodes that should be running the Daemon (including nodes correctly running the daemon)"`
+}
+
+// Daemon represents the configuration of a daemon.
+type Daemon struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty" description:"standard object metadata; see http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata"`
+
+	// Spec defines the desired behavior of this daemon.
+	Spec DaemonSpec `json:"spec,omitempty" description:"specification of the desired behavior of the daemon; http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status"`
+
+	// Status is the current status of this daemon. This data may be
+	// out of date by some window of time.
+	Status DaemonStatus `json:"status,omitempty" description:"most recently observed status of the daemon; populated by the system, read-only; http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#spec-and-status"`
+}
+
+// DaemonList is a collection of daemon.
+type DaemonList struct {
+	TypeMeta `json:",inline"`
+	ListMeta `json:"metadata,omitempty" description:"standard list metadata; see http://releases.k8s.io/HEAD/docs/devel/api-conventions.md#metadata"`
+
+	Items []Daemon `json:"items" description:"list of daemons"`
 }
 
 // Session Affinity Type string
@@ -1475,7 +1528,32 @@ type PodLogOptions struct {
 	Previous bool `json:"previous,omitempty" description:"return previous terminated container logs; defaults to false"`
 }
 
+// PodAttachOptions is the query options to a Pod's remote attach call
+// TODO: merge w/ PodExecOptions below for stdin, stdout, etc
+// and also when we cut V2, we should export a "StreamOptions" or somesuch that contains Stdin, Stdout, Stder and TTY
+type PodAttachOptions struct {
+	TypeMeta `json:",inline"`
+
+	// Stdin if true indicates that stdin is to be redirected for the attach call
+	Stdin bool `json:"stdin,omitempty" description:"redirect the standard input stream of the pod for this call; defaults to false"`
+
+	// Stdout if true indicates that stdout is to be redirected for the attach call
+	Stdout bool `json:"stdout,omitempty" description:"redirect the standard output stream of the pod for this call; defaults to true"`
+
+	// Stderr if true indicates that stderr is to be redirected for the attach call
+	Stderr bool `json:"stderr,omitempty" description:"redirect the standard error stream of the pod for this call; defaults to true"`
+
+	// TTY if true indicates that a tty will be allocated for the attach call, this is passed through to the container runtime so the tty
+	// is allocated on the worker node by the container runtime.
+	TTY bool `json:"tty,omitempty" description:"allocate a terminal for this attach call; defaults to false"`
+
+	// Container to attach to.
+	Container string `json:"container,omitempty" description:"the container in which to execute the command. Defaults to only container if there is only one container in the pod."`
+}
+
 // PodExecOptions is the query options to a Pod's remote exec call
+// TODO: This is largely identical to PodAttachOptions above, make sure they stay in sync and see about merging
+// and also when we cut V2, we should export a "StreamOptions" or somesuch that contains Stdin, Stdout, Stder and TTY
 type PodExecOptions struct {
 	TypeMeta `json:",inline"`
 
@@ -1799,6 +1877,8 @@ const (
 	ResourceServices ResourceName = "services"
 	// ReplicationControllers, number
 	ResourceReplicationControllers ResourceName = "replicationcontrollers"
+	// Daemon, number
+	ResourceDaemon ResourceName = "daemon"
 	// ResourceQuotas, number
 	ResourceQuotas ResourceName = "resourcequotas"
 	// ResourceSecrets, number

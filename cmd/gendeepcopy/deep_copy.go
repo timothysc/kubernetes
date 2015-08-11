@@ -19,12 +19,14 @@ package main
 import (
 	"io"
 	"os"
+	"path"
 	"runtime"
 	"strings"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	_ "github.com/GoogleCloudPlatform/kubernetes/pkg/api/v1"
-	pkg_runtime "github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/api"
+	_ "k8s.io/kubernetes/pkg/api/v1"
+	pkg_runtime "k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/util"
 
 	"github.com/golang/glog"
 	flag "github.com/spf13/pflag"
@@ -53,27 +55,37 @@ func main() {
 	}
 
 	knownVersion := *version
+	registerTo := "api.Scheme"
 	if knownVersion == "api" {
 		knownVersion = api.Scheme.Raw().InternalVersion
+		registerTo = "Scheme"
 	}
-	generator := pkg_runtime.NewDeepCopyGenerator(api.Scheme.Raw())
+	pkgPath := path.Join("k8s.io/kubernetes/pkg/api", knownVersion)
+	generator := pkg_runtime.NewDeepCopyGenerator(api.Scheme.Raw(), pkgPath, util.NewStringSet("k8s.io/kubernetes"))
+	generator.AddImport("k8s.io/kubernetes/pkg/api")
 
-	for _, overwrite := range strings.Split(*overwrites, ",") {
-		vals := strings.Split(overwrite, "=")
-		generator.OverwritePackage(vals[0], vals[1])
+	if len(*overwrites) > 0 {
+		for _, overwrite := range strings.Split(*overwrites, ",") {
+			if !strings.Contains(overwrite, "=") {
+				glog.Fatalf("Invalid overwrite syntax: %s", overwrite)
+			}
+			vals := strings.Split(overwrite, "=")
+			generator.OverwritePackage(vals[0], vals[1])
+		}
 	}
 	for _, knownType := range api.Scheme.KnownTypes(knownVersion) {
 		if err := generator.AddType(knownType); err != nil {
 			glog.Errorf("error while generating deep copy functions for %v: %v", knownType, err)
 		}
 	}
-	if err := generator.WriteImports(funcOut, *version); err != nil {
+	generator.RepackImports()
+	if err := generator.WriteImports(funcOut); err != nil {
 		glog.Fatalf("error while writing imports: %v", err)
 	}
 	if err := generator.WriteDeepCopyFunctions(funcOut); err != nil {
 		glog.Fatalf("error while writing deep copy functions: %v", err)
 	}
-	if err := generator.RegisterDeepCopyFunctions(funcOut, *version); err != nil {
+	if err := generator.RegisterDeepCopyFunctions(funcOut, registerTo); err != nil {
 		glog.Fatalf("error while registering deep copy functions: %v", err)
 	}
 }

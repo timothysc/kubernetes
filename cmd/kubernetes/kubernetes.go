@@ -28,24 +28,27 @@ import (
 	"runtime"
 	"time"
 
-	kubeletapp "github.com/GoogleCloudPlatform/kubernetes/cmd/kubelet/app"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/testapi"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/apiserver"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider/nodecontroller"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider/servicecontroller"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/controller/replication"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/cadvisor"
-	kubecontainer "github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/container"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/dockertools"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/master"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/service"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	"github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler"
-	_ "github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler/algorithmprovider"
-	"github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler/factory"
+	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/latest"
+	"k8s.io/kubernetes/pkg/api/testapi"
+	"k8s.io/kubernetes/pkg/apiserver"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/controller/endpoint"
+	"k8s.io/kubernetes/pkg/controller/node"
+	"k8s.io/kubernetes/pkg/controller/replication"
+	"k8s.io/kubernetes/pkg/controller/service"
+	explatest "k8s.io/kubernetes/pkg/expapi/latest"
+	"k8s.io/kubernetes/pkg/kubelet/cadvisor"
+	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
+	"k8s.io/kubernetes/pkg/kubelet/dockertools"
+	"k8s.io/kubernetes/pkg/master"
+	etcdstorage "k8s.io/kubernetes/pkg/storage/etcd"
+	"k8s.io/kubernetes/pkg/tools"
+	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/plugin/pkg/scheduler"
+	_ "k8s.io/kubernetes/plugin/pkg/scheduler/algorithmprovider"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/factory"
 
 	"github.com/golang/glog"
 	flag "github.com/spf13/pflag"
@@ -60,6 +63,11 @@ var (
 	enableProfiling        = flag.Bool("profiling", false, "Enable profiling via web interface host:port/debug/pprof/")
 	deletingPodsQps        = flag.Float32("deleting-pods-qps", 0.1, "")
 	deletingPodsBurst      = flag.Int("deleting-pods-burst", 10, "")
+)
+
+const (
+	bindPodsQps   = 15
+	bindPodsBurst = 20
 )
 
 type delegateHandler struct {
@@ -78,14 +86,19 @@ func (h *delegateHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 func runApiServer(etcdClient tools.EtcdClient, addr net.IP, port int, masterServiceNamespace string) {
 	handler := delegateHandler{}
 
-	etcdStorage, err := master.NewEtcdStorage(etcdClient, "", master.DefaultEtcdPathPrefix)
+	etcdStorage, err := master.NewEtcdStorage(etcdClient, latest.InterfacesFor, latest.Version, master.DefaultEtcdPathPrefix)
 	if err != nil {
 		glog.Fatalf("Unable to get etcd storage: %v", err)
+	}
+	expEtcdStorage, err := master.NewEtcdStorage(etcdClient, explatest.InterfacesFor, explatest.Version, master.DefaultEtcdPathPrefix)
+	if err != nil {
+		glog.Fatalf("Unable to get etcd storage for experimental: %v", err)
 	}
 
 	// Create a master and install handlers into mux.
 	m := master.New(&master.Config{
-		DatabaseStorage: etcdStorage,
+		DatabaseStorage:    etcdStorage,
+		ExpDatabaseStorage: expEtcdStorage,
 		KubeletClient: &client.HTTPKubeletClient{
 			Client: http.DefaultClient,
 			Config: &client.KubeletConfig{Port: 10250},
@@ -95,6 +108,7 @@ func runApiServer(etcdClient tools.EtcdClient, addr net.IP, port int, masterServ
 		EnableSwaggerSupport:  true,
 		EnableProfiling:       *enableProfiling,
 		APIPrefix:             "/api",
+		ExpAPIPrefix:          "/experimental",
 		Authorizer:            apiserver.NewAlwaysAllowAuthorizer(),
 
 		ReadWritePort:          port,
@@ -109,7 +123,7 @@ func runApiServer(etcdClient tools.EtcdClient, addr net.IP, port int, masterServ
 // RunScheduler starts up a scheduler in it's own goroutine
 func runScheduler(cl *client.Client) {
 	// Scheduler
-	schedulerConfigFactory := factory.NewConfigFactory(cl)
+	schedulerConfigFactory := factory.NewConfigFactory(cl, util.NewTokenBucketRateLimiter(bindPodsQps, bindPodsBurst))
 	schedulerConfig, err := schedulerConfigFactory.Create()
 	if err != nil {
 		glog.Fatalf("Couldn't create scheduler config: %v", err)
@@ -122,7 +136,7 @@ func runControllerManager(cl *client.Client) {
 	const serviceSyncPeriod = 5 * time.Minute
 	const nodeSyncPeriod = 10 * time.Second
 	nodeController := nodecontroller.NewNodeController(
-		nil, cl, 10, 5*time.Minute, nodecontroller.NewPodEvictor(util.NewTokenBucketRateLimiter(*deletingPodsQps, *deletingPodsBurst)),
+		nil, cl, 5*time.Minute, nodecontroller.NewPodEvictor(util.NewTokenBucketRateLimiter(*deletingPodsQps, *deletingPodsBurst)),
 		40*time.Second, 60*time.Second, 5*time.Second, nil, false)
 	nodeController.Run(nodeSyncPeriod)
 
@@ -131,10 +145,10 @@ func runControllerManager(cl *client.Client) {
 		glog.Warningf("Running without a service controller: %v", err)
 	}
 
-	endpoints := service.NewEndpointController(cl)
+	endpoints := endpointcontroller.NewEndpointController(cl)
 	go endpoints.Run(5, util.NeverStop)
 
-	controllerManager := replication.NewReplicationManager(cl, replication.BurstReplicas)
+	controllerManager := replicationcontroller.NewReplicationManager(cl, replicationcontroller.BurstReplicas)
 	go controllerManager.Run(5, util.NeverStop)
 }
 
@@ -167,7 +181,7 @@ func main() {
 	defer util.FlushLogs()
 
 	glog.Infof("Creating etcd client pointing to %v", *etcdServer)
-	etcdClient, err := tools.NewEtcdClientStartServerIfNecessary(*etcdServer)
+	etcdClient, err := etcdstorage.NewEtcdClientStartServerIfNecessary(*etcdServer)
 	if err != nil {
 		glog.Fatalf("Failed to connect to etcd: %v", err)
 	}

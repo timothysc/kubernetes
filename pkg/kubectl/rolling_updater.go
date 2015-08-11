@@ -25,12 +25,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util/wait"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 // RollingUpdater provides methods for updating replicated pods in a predictable,
@@ -312,10 +312,9 @@ type updateFunc func(controller *api.ReplicationController)
 
 // updateWithRetries updates applies the given rc as an update.
 func updateWithRetries(rcClient client.ReplicationControllerInterface, rc *api.ReplicationController, applyUpdate updateFunc) (*api.ReplicationController, error) {
-	// Each update could take ~100ms, so give it 0.5 second
 	var err error
 	oldRc := rc
-	err = wait.Poll(10*time.Millisecond, 500*time.Millisecond, func() (bool, error) {
+	err = wait.Poll(10*time.Millisecond, 1*time.Minute, func() (bool, error) {
 		// Apply the update, then attempt to push it to the apiserver.
 		applyUpdate(rc)
 		if rc, err = rcClient.Update(rc); err == nil {

@@ -25,21 +25,23 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util/wait"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/wait"
 )
 
 // This should match whatever the default/configured range is
 var ServiceNodePortRange = util.PortRange{Base: 30000, Size: 2768}
 
 var _ = Describe("Services", func() {
+	f := NewFramework("services")
+
 	var c *client.Client
 	// Use these in tests.  They're unique for each test to prevent name collisions.
 	var namespaces [2]string
@@ -463,9 +465,8 @@ var _ = Describe("Services", func() {
 		SkipUnlessProviderIs("gce", "gke", "aws")
 
 		serviceName := "mutability-service-test"
-		ns := namespaces[0]
 
-		t := NewWebserverTest(c, ns, serviceName)
+		t := NewWebserverTest(f.Client, f.Namespace.Name, serviceName)
 		defer func() {
 			defer GinkgoRecover()
 			errs := t.Cleanup()
@@ -498,7 +499,7 @@ var _ = Describe("Services", func() {
 		t.CreateWebserverRC(1)
 
 		By("changing service " + serviceName + " to type=NodePort")
-		service, err = updateService(c, ns, serviceName, func(s *api.Service) {
+		service, err = updateService(f.Client, f.Namespace.Name, serviceName, func(s *api.Service) {
 			s.Spec.Type = api.ServiceTypeNodePort
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -521,19 +522,19 @@ var _ = Describe("Services", func() {
 			Failf("got unexpected len(Status.LoadBalancer.Ingresss) for NodePort service: %v", service)
 		}
 		By("hitting the pod through the service's NodePort")
-		ip := pickMinionIP(c)
+		ip := pickMinionIP(f.Client)
 		nodePort1 := port.NodePort // Save for later!
 		testReachable(ip, nodePort1)
 
 		By("changing service " + serviceName + " to type=LoadBalancer")
 		service.Spec.Type = api.ServiceTypeLoadBalancer
-		service, err = updateService(c, ns, serviceName, func(s *api.Service) {
+		service, err = updateService(f.Client, f.Namespace.Name, serviceName, func(s *api.Service) {
 			s.Spec.Type = api.ServiceTypeLoadBalancer
 		})
 		Expect(err).NotTo(HaveOccurred())
 
 		// Wait for the load balancer to be created asynchronously
-		service, err = waitForLoadBalancerIngress(c, serviceName, ns)
+		service, err = waitForLoadBalancerIngress(f.Client, serviceName, f.Namespace.Name)
 		Expect(err).NotTo(HaveOccurred())
 
 		if service.Spec.Type != api.ServiceTypeLoadBalancer {
@@ -554,7 +555,7 @@ var _ = Describe("Services", func() {
 			Failf("got unexpected Status.LoadBalancer.Ingresss[0] for LoadBalancer service: %v", service)
 		}
 		By("hitting the pod through the service's NodePort")
-		ip = pickMinionIP(c)
+		ip = pickMinionIP(f.Client)
 		testReachable(ip, nodePort1)
 		By("hitting the pod through the service's LoadBalancer")
 		testLoadBalancerReachable(ingress1, 80)
@@ -565,7 +566,7 @@ var _ = Describe("Services", func() {
 			//Check for (unlikely) assignment at bottom of range
 			nodePort2 = nodePort1 + 1
 		}
-		service, err = updateService(c, ns, serviceName, func(s *api.Service) {
+		service, err = updateService(f.Client, f.Namespace.Name, serviceName, func(s *api.Service) {
 			s.Spec.Ports[0].NodePort = nodePort2
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -585,11 +586,11 @@ var _ = Describe("Services", func() {
 		}
 		ingress2 := service.Status.LoadBalancer.Ingress[0]
 
-		// TODO: Fix the issue here: https://github.com/GoogleCloudPlatform/kubernetes/issues/11002
+		// TODO: Fix the issue here: http://issue.k8s.io/11002
 		if providerIs("aws") {
 			// TODO: Make this less of a hack (or fix the underlying bug)
 			time.Sleep(time.Second * 120)
-			service, err = waitForLoadBalancerIngress(c, serviceName, ns)
+			service, err = waitForLoadBalancerIngress(f.Client, serviceName, f.Namespace.Name)
 			Expect(err).NotTo(HaveOccurred())
 
 			// We don't want the ingress point to change, but we should verify that the new ingress point still works
@@ -607,7 +608,7 @@ var _ = Describe("Services", func() {
 		testNotReachable(ip, nodePort1)
 
 		By("changing service " + serviceName + " back to type=ClusterIP")
-		service, err = updateService(c, ns, serviceName, func(s *api.Service) {
+		service, err = updateService(f.Client, f.Namespace.Name, serviceName, func(s *api.Service) {
 			s.Spec.Type = api.ServiceTypeClusterIP
 			s.Spec.Ports[0].NodePort = 0
 		})
@@ -625,17 +626,17 @@ var _ = Describe("Services", func() {
 		}
 
 		// Wait for the load balancer to be destroyed asynchronously
-		service, err = waitForLoadBalancerDestroy(c, serviceName, ns)
+		service, err = waitForLoadBalancerDestroy(f.Client, serviceName, f.Namespace.Name)
 		Expect(err).NotTo(HaveOccurred())
 
 		if len(service.Status.LoadBalancer.Ingress) != 0 {
 			Failf("got unexpected len(Status.LoadBalancer.Ingresss) for back-to-ClusterIP service: %v", service)
 		}
 		By("checking the NodePort (original) is closed")
-		ip = pickMinionIP(c)
+		ip = pickMinionIP(f.Client)
 		testNotReachable(ip, nodePort1)
 		By("checking the NodePort (updated) is closed")
-		ip = pickMinionIP(c)
+		ip = pickMinionIP(f.Client)
 		testNotReachable(ip, nodePort2)
 		By("checking the LoadBalancer is closed")
 		testLoadBalancerNotReachable(ingress2, 80)
@@ -770,7 +771,7 @@ var _ = Describe("Services", func() {
 		if err == nil {
 			Failf("Created service with conflicting NodePort: %v", result2)
 		}
-		expectedErr := fmt.Sprintf("Service \"%s\" is invalid: spec.ports[0].nodePort: invalid value '%d': provided port is already allocated", serviceName2, port.NodePort)
+		expectedErr := fmt.Sprintf("Service \"%s\" is invalid: spec.ports[0].nodePort: invalid value '%d', Details: provided port is already allocated", serviceName2, port.NodePort)
 		Expect(fmt.Sprintf("%v", err)).To(Equal(expectedErr))
 
 		By("deleting original service " + serviceName + " with type NodePort in namespace " + ns)
@@ -830,7 +831,7 @@ var _ = Describe("Services", func() {
 		if err == nil {
 			Failf("failed to prevent update of service with out-of-range NodePort: %v", result)
 		}
-		expectedErr := fmt.Sprintf("Service \"%s\" is invalid: spec.ports[0].nodePort: invalid value '%d': provided port is not in the valid range", serviceName, outOfRangeNodePort)
+		expectedErr := fmt.Sprintf("Service \"%s\" is invalid: spec.ports[0].nodePort: invalid value '%d', Details: provided port is not in the valid range", serviceName, outOfRangeNodePort)
 		Expect(fmt.Sprintf("%v", err)).To(Equal(expectedErr))
 
 		By("deleting original service " + serviceName)

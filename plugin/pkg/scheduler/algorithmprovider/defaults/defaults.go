@@ -18,12 +18,12 @@ limitations under the License.
 package defaults
 
 import (
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	"github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler"
-	"github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler/algorithm"
-	"github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
-	"github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler/algorithm/priorities"
-	"github.com/GoogleCloudPlatform/kubernetes/plugin/pkg/scheduler/factory"
+	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/plugin/pkg/scheduler"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/predicates"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/algorithm/priorities"
+	"k8s.io/kubernetes/plugin/pkg/scheduler/factory"
 )
 
 func init() {
@@ -67,10 +67,10 @@ func defaultPriorities() util.StringSet {
 		factory.RegisterPriorityFunction("BalancedResourceAllocation", priorities.BalancedResourceAllocation, 1),
 		// spreads pods by minimizing the number of pods (belonging to the same service) on the same minion.
 		factory.RegisterPriorityConfigFactory(
-			"ServiceSpreadingPriority",
+			"SelectorSpreadPriority",
 			factory.PriorityConfigFactory{
 				Function: func(args factory.PluginFactoryArgs) algorithm.PriorityFunction {
-					return priorities.NewServiceSpreadPriority(args.ServiceLister)
+					return priorities.NewSelectorSpreadPriority(args.ServiceLister, args.ControllerLister)
 				},
 				Weight: 1,
 			},

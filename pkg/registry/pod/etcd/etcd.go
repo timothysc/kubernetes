@@ -22,21 +22,21 @@ import (
 	"net/url"
 	"path"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
-	etcderr "github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors/etcd"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/rest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/capabilities"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/registry/generic"
-	etcdgeneric "github.com/GoogleCloudPlatform/kubernetes/pkg/registry/generic/etcd"
-	genericrest "github.com/GoogleCloudPlatform/kubernetes/pkg/registry/generic/rest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/registry/pod"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util/fielderrors"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/errors"
+	etcderr "k8s.io/kubernetes/pkg/api/errors/etcd"
+	"k8s.io/kubernetes/pkg/api/rest"
+	"k8s.io/kubernetes/pkg/capabilities"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/registry/generic"
+	etcdgeneric "k8s.io/kubernetes/pkg/registry/generic/etcd"
+	genericrest "k8s.io/kubernetes/pkg/registry/generic/rest"
+	"k8s.io/kubernetes/pkg/registry/pod"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/storage"
+	"k8s.io/kubernetes/pkg/util/fielderrors"
 )
 
 // PodStorage includes storage for pods and all sub resources
@@ -47,6 +47,7 @@ type PodStorage struct {
 	Log         *LogREST
 	Proxy       *ProxyREST
 	Exec        *ExecREST
+	Attach      *AttachREST
 	PortForward *PortForwardREST
 }
 
@@ -56,7 +57,7 @@ type REST struct {
 }
 
 // NewStorage returns a RESTStorage object that will work against pods.
-func NewStorage(s tools.StorageInterface, k client.ConnectionInfoGetter) PodStorage {
+func NewStorage(s storage.Interface, k client.ConnectionInfoGetter) PodStorage {
 	prefix := "/pods"
 	store := &etcdgeneric.Etcd{
 		NewFunc:     func() runtime.Object { return &api.Pod{} },
@@ -79,13 +80,10 @@ func NewStorage(s tools.StorageInterface, k client.ConnectionInfoGetter) PodStor
 	}
 	statusStore := *store
 
-	bindings := &podLifecycle{}
 	store.CreateStrategy = pod.Strategy
 	store.UpdateStrategy = pod.Strategy
-	store.AfterUpdate = bindings.AfterUpdate
 	store.DeleteStrategy = pod.Strategy
 	store.ReturnDeletedObject = true
-	store.AfterDelete = bindings.AfterDelete
 
 	statusStore.UpdateStrategy = pod.StatusStrategy
 
@@ -96,6 +94,7 @@ func NewStorage(s tools.StorageInterface, k client.ConnectionInfoGetter) PodStor
 		Log:         &LogREST{store: store, kubeletConn: k},
 		Proxy:       &ProxyREST{store: store},
 		Exec:        &ExecREST{store: store, kubeletConn: k},
+		Attach:      &AttachREST{store: store, kubeletConn: k},
 		PortForward: &PortForwardREST{store: store, kubeletConn: k},
 	}
 }
@@ -143,7 +142,7 @@ func (r *BindingREST) setPodHostAndAnnotations(ctx api.Context, podID, oldMachin
 	if err != nil {
 		return nil, err
 	}
-	err = r.store.Storage.GuaranteedUpdate(podKey, &api.Pod{}, false, tools.SimpleUpdate(func(obj runtime.Object) (runtime.Object, error) {
+	err = r.store.Storage.GuaranteedUpdate(podKey, &api.Pod{}, false, storage.SimpleUpdate(func(obj runtime.Object) (runtime.Object, error) {
 		pod, ok := obj.(*api.Pod)
 		if !ok {
 			return nil, fmt.Errorf("unexpected object: %#v", obj)
@@ -177,16 +176,6 @@ func (r *BindingREST) assignPod(ctx api.Context, podID string, machine string, a
 		}
 	}
 	return
-}
-
-type podLifecycle struct{}
-
-func (h *podLifecycle) AfterUpdate(obj runtime.Object) error {
-	return nil
-}
-
-func (h *podLifecycle) AfterDelete(obj runtime.Object) error {
-	return nil
 }
 
 // StatusREST implements the REST endpoint for changing the status of a pod.
@@ -283,6 +272,43 @@ func (r *ProxyREST) Connect(ctx api.Context, id string, opts runtime.Object) (re
 
 // Support both GET and POST methods. Over time, we want to move all clients to start using POST and then stop supporting GET.
 var upgradeableMethods = []string{"GET", "POST"}
+
+// AttachREST implements the attach subresource for a Pod
+type AttachREST struct {
+	store       *etcdgeneric.Etcd
+	kubeletConn client.ConnectionInfoGetter
+}
+
+// Implement Connecter
+var _ = rest.Connecter(&AttachREST{})
+
+// New creates a new Pod object
+func (r *AttachREST) New() runtime.Object {
+	return &api.Pod{}
+}
+
+// Connect returns a handler for the pod exec proxy
+func (r *AttachREST) Connect(ctx api.Context, name string, opts runtime.Object) (rest.ConnectHandler, error) {
+	attachOpts, ok := opts.(*api.PodAttachOptions)
+	if !ok {
+		return nil, fmt.Errorf("Invalid options object: %#v", opts)
+	}
+	location, transport, err := pod.AttachLocation(r.store, r.kubeletConn, ctx, name, attachOpts)
+	if err != nil {
+		return nil, err
+	}
+	return genericrest.NewUpgradeAwareProxyHandler(location, transport, true), nil
+}
+
+// NewConnectOptions returns the versioned object that represents exec parameters
+func (r *AttachREST) NewConnectOptions() (runtime.Object, bool, string) {
+	return &api.PodAttachOptions{}, false, ""
+}
+
+// ConnectMethods returns the methods supported by exec
+func (r *AttachREST) ConnectMethods() []string {
+	return upgradeableMethods
+}
 
 // ExecREST implements the exec subresource for a Pod
 type ExecREST struct {

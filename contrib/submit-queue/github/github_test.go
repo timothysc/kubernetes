@@ -24,11 +24,14 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/google/go-github/github"
 )
 
-func stringPtr(val string) *string { return &val }
+func stringPtr(val string) *string     { return &val }
+func timePtr(val time.Time) *time.Time { return &val }
+func intPtr(val int) *int              { return &val }
 
 func TestHasLabel(t *testing.T) {
 	tests := []struct {
@@ -386,5 +389,236 @@ func TestComputeStatus(t *testing.T) {
 		if test.expected != status {
 			t.Errorf("expected: %s, saw %s", test.expected, status)
 		}
+	}
+}
+
+func TestValidateLGTMAfterPush(t *testing.T) {
+	tests := []struct {
+		issueEvents  []github.IssueEvent
+		shouldPass   bool
+		lastModified time.Time
+	}{
+		{
+			issueEvents: []github.IssueEvent{
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(10, 0)),
+				},
+			},
+			lastModified: time.Unix(9, 0),
+			shouldPass:   true,
+		},
+		{
+			issueEvents: []github.IssueEvent{
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(10, 0)),
+				},
+			},
+			lastModified: time.Unix(11, 0),
+			shouldPass:   false,
+		},
+		{
+			issueEvents: []github.IssueEvent{
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(12, 0)),
+				},
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(11, 0)),
+				},
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(10, 0)),
+				},
+			},
+			lastModified: time.Unix(11, 0),
+			shouldPass:   true,
+		},
+		{
+			issueEvents: []github.IssueEvent{
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(10, 0)),
+				},
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(11, 0)),
+				},
+				{
+					Event: stringPtr("labeled"),
+					Label: &github.Label{
+						Name: stringPtr("lgtm"),
+					},
+					CreatedAt: timePtr(time.Unix(12, 0)),
+				},
+			},
+			lastModified: time.Unix(11, 0),
+			shouldPass:   true,
+		},
+	}
+	for _, test := range tests {
+		client, server, mux := initTest()
+		mux.HandleFunc(fmt.Sprintf("/repos/o/r/issues/1/events"), func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "GET" {
+				t.Errorf("Unexpected method: %s", r.Method)
+			}
+			w.WriteHeader(http.StatusOK)
+			data, err := json.Marshal(test.issueEvents)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			w.Write(data)
+			ok, err := validateLGTMAfterPush(client, "o", "r", &github.PullRequest{Number: intPtr(1)}, &test.lastModified)
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if ok != test.shouldPass {
+				t.Errorf("expected: %v, saw: %v", test.shouldPass, ok)
+			}
+		})
+		server.Close()
+	}
+}
+
+func TestGetLastModified(t *testing.T) {
+	tests := []struct {
+		commits      []github.RepositoryCommit
+		expectedTime *time.Time
+	}{
+		{
+			commits: []github.RepositoryCommit{
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(10, 0)),
+						},
+					},
+				},
+			},
+			expectedTime: timePtr(time.Unix(10, 0)),
+		},
+		{
+			commits: []github.RepositoryCommit{
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(10, 0)),
+						},
+					},
+				},
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(11, 0)),
+						},
+					},
+				},
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(12, 0)),
+						},
+					},
+				},
+			},
+			expectedTime: timePtr(time.Unix(12, 0)),
+		},
+		{
+			commits: []github.RepositoryCommit{
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(10, 0)),
+						},
+					},
+				},
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(9, 0)),
+						},
+					},
+				},
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(8, 0)),
+						},
+					},
+				},
+			},
+			expectedTime: timePtr(time.Unix(10, 0)),
+		},
+		{
+			commits: []github.RepositoryCommit{
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(9, 0)),
+						},
+					},
+				},
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(10, 0)),
+						},
+					},
+				},
+				{
+					Commit: &github.Commit{
+						Committer: &github.CommitAuthor{
+							Date: timePtr(time.Unix(9, 0)),
+						},
+					},
+				},
+			},
+			expectedTime: timePtr(time.Unix(10, 0)),
+		},
+	}
+	for _, test := range tests {
+		client, server, mux := initTest()
+		mux.HandleFunc(fmt.Sprintf("/repos/o/r/pulls/1/commits"), func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != "GET" {
+				t.Errorf("Unexpected method: %s", r.Method)
+			}
+			w.WriteHeader(http.StatusOK)
+			data, err := json.Marshal(test.commits)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			w.Write(data)
+			ts, err := lastModifiedTime(client, "o", "r", &github.PullRequest{Number: intPtr(1)})
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+			if !ts.Equal(*test.expectedTime) {
+				t.Errorf("expected: %v, saw: %v", test.expectedTime, ts)
+			}
+		})
+		server.Close()
 	}
 }

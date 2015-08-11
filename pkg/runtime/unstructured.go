@@ -21,7 +21,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/conversion"
+	"k8s.io/kubernetes/pkg/conversion"
 )
 
 // UnstructuredJSONScheme is capable of converting JSON data into the Unstructured
@@ -71,6 +71,10 @@ func (unstructuredJSONScheme) DecodeInto(data []byte, obj Object) error {
 		return conversion.NewMissingKindErr(string(data))
 	}
 	unstruct.Object = m
+	return nil
+}
+
+func (unstructuredJSONScheme) DecodeIntoWithSpecifiedVersionKind(data []byte, obj Object, kind, version string) error {
 	return nil
 }
 

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util"
 
 	"github.com/golang/glog"
 	"github.com/google/go-github/github"
@@ -86,6 +86,42 @@ type FilterConfig struct {
 	RequiredStatusContexts []string
 }
 
+func lastModifiedTime(client *github.Client, user, project string, pr *github.PullRequest) (*time.Time, error) {
+	list, _, err := client.PullRequests.ListCommits(user, project, *pr.Number, &github.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var lastModified *time.Time
+	for ix := range list {
+		item := list[ix]
+		if lastModified == nil || item.Commit.Committer.Date.After(*lastModified) {
+			lastModified = item.Commit.Committer.Date
+		}
+	}
+	return lastModified, nil
+}
+
+func validateLGTMAfterPush(client *github.Client, user, project string, pr *github.PullRequest, lastModifiedTime *time.Time) (bool, error) {
+	var lgtmTime *time.Time
+	events, _, err := client.Issues.ListIssueEvents(user, project, *pr.Number, &github.ListOptions{})
+	if err != nil {
+		glog.Errorf("Error getting events for issue: %v", err)
+		return false, err
+	}
+	for ix := range events {
+		event := &events[ix]
+		if *event.Event == "labeled" && *event.Label.Name == "lgtm" {
+			if lgtmTime == nil || event.CreatedAt.After(*lgtmTime) {
+				lgtmTime = event.CreatedAt
+			}
+		}
+	}
+	if lgtmTime == nil {
+		return false, fmt.Errorf("Couldn't find time for LGTM label, this shouldn't happen, skipping PR: %d", *pr.Number)
+	}
+	return lastModifiedTime.Before(*lgtmTime), nil
+}
+
 // For each PR in the project that matches:
 //   * pr.Number > minPRNumber
 //   * is mergeable
@@ -124,12 +160,33 @@ func ForEachCandidatePRDo(client *github.Client, user, project string, fn PRFunc
 			glog.Errorf("Failed to get issue for PR: %v", err)
 			continue
 		}
+
 		glog.V(8).Infof("%v", issue.Labels)
 		if !hasLabels(issue.Labels, []string{"lgtm", "cla: yes"}) {
 			continue
 		}
 		if !hasLabel(issue.Labels, config.WhitelistOverride) && !userSet.Has(*prs[ix].User.Login) {
 			glog.V(4).Infof("Dropping %d since %s isn't in whitelist and %s isn't present", *prs[ix].Number, *prs[ix].User.Login, config.WhitelistOverride)
+			continue
+		}
+
+		lastModifiedTime, err := lastModifiedTime(client, user, project, pr)
+		if err != nil {
+			glog.Errorf("Failed to get last modified time, skipping PR: %d", *pr.Number)
+			continue
+		}
+		if ok, err := validateLGTMAfterPush(client, user, project, pr, lastModifiedTime); err != nil {
+			glog.Errorf("Error validating LGTM: %v, Skipping: %d", err, *pr.Number)
+			continue
+		} else if !ok {
+			glog.Errorf("PR pushed after LGTM, attempting to remove LGTM and skipping")
+			staleLGTMBody := "LGTM was before last commit, removing LGTM"
+			if _, _, err := client.Issues.CreateComment(user, project, *pr.Number, &github.IssueComment{Body: &staleLGTMBody}); err != nil {
+				glog.Warningf("Failed to create remove label comment: %v", err)
+			}
+			if _, err := client.Issues.RemoveLabelForIssue(user, project, *pr.Number, "lgtm"); err != nil {
+				glog.Warningf("Failed to remove 'lgtm' label for stale lgtm on %d", *pr.Number)
+			}
 			continue
 		}
 

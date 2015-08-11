@@ -27,19 +27,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util/wait"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/resource"
+	"k8s.io/kubernetes/pkg/cloudprovider"
+	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/wait"
 
 	"code.google.com/p/gcfg"
-	compute "code.google.com/p/google-api-go-client/compute/v1"
-	container "code.google.com/p/google-api-go-client/container/v1beta1"
-	"code.google.com/p/google-api-go-client/googleapi"
 	"github.com/golang/glog"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	compute "google.golang.org/api/compute/v1"
+	container "google.golang.org/api/container/v1beta1"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/cloud/compute/metadata"
 )
 
@@ -58,6 +58,7 @@ type GCECloud struct {
 	projectID        string
 	zone             string
 	instanceID       string
+	externalID       string
 	networkName      string
 
 	// Used for accessing the metadata server
@@ -124,6 +125,14 @@ func getInstanceID() (string, error) {
 	return parts[0], nil
 }
 
+func getCurrentExternalID() (string, error) {
+	externalID, err := metadata.Get("instance/id")
+	if err != nil {
+		return "", fmt.Errorf("couldn't get external ID: %v", err)
+	}
+	return externalID, nil
+}
+
 func getNetworkName() (string, error) {
 	result, err := metadata.Get("instance/network-interfaces/0/network")
 	if err != nil {
@@ -146,6 +155,10 @@ func newGCECloud(config io.Reader) (*GCECloud, error) {
 	// e.g. on a user's machine (not VM) somewhere, we need to have an alternative for
 	// instance id lookup.
 	instanceID, err := getInstanceID()
+	if err != nil {
+		return nil, err
+	}
+	externalID, err := getCurrentExternalID()
 	if err != nil {
 		return nil, err
 	}
@@ -185,6 +198,7 @@ func newGCECloud(config io.Reader) (*GCECloud, error) {
 		projectID:        projectID,
 		zone:             zone,
 		instanceID:       instanceID,
+		externalID:       externalID,
 		networkName:      networkName,
 		metadataAccess:   getMetadata,
 	}, nil
@@ -276,13 +290,19 @@ func (gce *GCECloud) targetPoolURL(name, region string) string {
 
 func waitForOp(op *compute.Operation, getOperation func() (*compute.Operation, error)) error {
 	pollOp := op
+	consecPollFails := 0
 	for pollOp.Status != "DONE" {
 		var err error
-		// TODO: add some backoff here.
-		time.Sleep(time.Second)
+		time.Sleep(3 * time.Second)
 		pollOp, err = getOperation()
 		if err != nil {
-			return err
+			if consecPollFails == 2 {
+				// Only bail if we've seen 3 consecutive polling errors.
+				return err
+			}
+			consecPollFails++
+		} else {
+			consecPollFails = 0
 		}
 	}
 	if pollOp.Error != nil && len(pollOp.Error.Errors) > 0 {
@@ -628,8 +648,16 @@ func (gce *GCECloud) NodeAddresses(_ string) ([]api.NodeAddress, error) {
 	}, nil
 }
 
+func (gce *GCECloud) isCurrentInstance(instance string) bool {
+	return gce.instanceID == canonicalizeInstanceName(instance)
+}
+
 // ExternalID returns the cloud provider ID of the specified instance (deprecated).
 func (gce *GCECloud) ExternalID(instance string) (string, error) {
+	// if we are asking about the current instance, just go to metadata
+	if gce.isCurrentInstance(instance) {
+		return gce.externalID, nil
+	}
 	inst, err := gce.getInstanceByName(instance)
 	if err != nil {
 		return "", err

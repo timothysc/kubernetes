@@ -31,22 +31,22 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/clientcmd"
-	clientcmdapi "github.com/GoogleCloudPlatform/kubernetes/pkg/client/clientcmd/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider/nodecontroller"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider/routecontroller"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider/servicecontroller"
-	replicationControllerPkg "github.com/GoogleCloudPlatform/kubernetes/pkg/controller/replication"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/healthz"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/master/ports"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/namespace"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/resourcequota"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/service"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/serviceaccount"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/volumeclaimbinder"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/client/clientcmd"
+	clientcmdapi "k8s.io/kubernetes/pkg/client/clientcmd/api"
+	"k8s.io/kubernetes/pkg/cloudprovider"
+	"k8s.io/kubernetes/pkg/controller/endpoint"
+	"k8s.io/kubernetes/pkg/controller/namespace"
+	"k8s.io/kubernetes/pkg/controller/node"
+	replicationControllerPkg "k8s.io/kubernetes/pkg/controller/replication"
+	"k8s.io/kubernetes/pkg/controller/resourcequota"
+	"k8s.io/kubernetes/pkg/controller/route"
+	"k8s.io/kubernetes/pkg/controller/service"
+	"k8s.io/kubernetes/pkg/controller/serviceaccount"
+	"k8s.io/kubernetes/pkg/healthz"
+	"k8s.io/kubernetes/pkg/master/ports"
+	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/volumeclaimbinder"
 
 	"github.com/golang/glog"
 	"github.com/prometheus/client_golang/prometheus"
@@ -125,6 +125,7 @@ func (s *CMServer) AddFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&s.DeletingPodsBurst, "deleting-pods-burst", 10, "Number of nodes on which pods are bursty deleted in case of node failure. For more details look into RateLimiter.")
 	fs.IntVar(&s.RegisterRetryCount, "register-retry-count", s.RegisterRetryCount, ""+
 		"The number of retries for initial node registration.  Retry interval equals node-sync-period.")
+	fs.MarkDeprecated("register-retry-count", "This flag is currenty no-op and will be deleted.")
 	fs.DurationVar(&s.NodeMonitorGracePeriod, "node-monitor-grace-period", 40*time.Second,
 		"Amount of time which we allow running Node to be unresponsive before marking it unhealty. "+
 			"Must be N times more than kubelet's nodeStatusUpdateFrequency, "+
@@ -183,7 +184,7 @@ func (s *CMServer) Run(_ []string) error {
 		glog.Fatal(server.ListenAndServe())
 	}()
 
-	endpoints := service.NewEndpointController(kubeClient)
+	endpoints := endpointcontroller.NewEndpointController(kubeClient)
 	go endpoints.Run(s.ConcurrentEndpointSyncs, util.NeverStop)
 
 	controllerManager := replicationControllerPkg.NewReplicationManager(kubeClient, replicationControllerPkg.BurstReplicas)
@@ -194,7 +195,7 @@ func (s *CMServer) Run(_ []string) error {
 		glog.Fatalf("Cloud provider could not be initialized: %v", err)
 	}
 
-	nodeController := nodecontroller.NewNodeController(cloud, kubeClient, s.RegisterRetryCount,
+	nodeController := nodecontroller.NewNodeController(cloud, kubeClient,
 		s.PodEvictionTimeout, nodecontroller.NewPodEvictor(util.NewTokenBucketRateLimiter(s.DeletingPodsQps, s.DeletingPodsBurst)),
 		s.NodeMonitorGracePeriod, s.NodeStartupGracePeriod, s.NodeMonitorPeriod, (*net.IPNet)(&s.ClusterCIDR), s.AllocateNodeCIDRs)
 	nodeController.Run(s.NodeSyncPeriod)
@@ -215,11 +216,11 @@ func (s *CMServer) Run(_ []string) error {
 		}
 	}
 
-	resourceQuotaManager := resourcequota.NewResourceQuotaManager(kubeClient)
-	resourceQuotaManager.Run(s.ResourceQuotaSyncPeriod)
+	resourceQuotaController := resourcequotacontroller.NewResourceQuotaController(kubeClient)
+	resourceQuotaController.Run(s.ResourceQuotaSyncPeriod)
 
-	namespaceManager := namespace.NewNamespaceManager(kubeClient, s.NamespaceSyncPeriod)
-	namespaceManager.Run()
+	namespaceController := namespacecontroller.NewNamespaceController(kubeClient, s.NamespaceSyncPeriod)
+	namespaceController.Run()
 
 	pvclaimBinder := volumeclaimbinder.NewPersistentVolumeClaimBinder(kubeClient, s.PVClaimBinderSyncPeriod)
 	pvclaimBinder.Run()

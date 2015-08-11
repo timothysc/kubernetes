@@ -22,15 +22,15 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/registered"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/types"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
 	docker "github.com/fsouza/go-dockerclient"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/registered"
+	"k8s.io/kubernetes/pkg/api/resource"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util"
 
 	"github.com/google/gofuzz"
 	"speter.net/go/exp/math/dec/inf"
@@ -110,9 +110,8 @@ func FuzzerFor(t *testing.T, version string, src rand.Source) *fuzz.Fuzzer {
 			c.FuzzNoCustom(j) // fuzz self without calling this function again
 			//j.TemplateRef = nil // this is required for round trip
 		},
-		func(j *api.ReplicationControllerStatus, c fuzz.Continue) {
-			// only replicas round trips
-			j.Replicas = int(c.RandUint64())
+		func(j *api.DaemonSpec, c fuzz.Continue) {
+			c.FuzzNoCustom(j) // fuzz self without calling this function again
 		},
 		func(j *api.List, c fuzz.Continue) {
 			c.FuzzNoCustom(j) // fuzz self without calling this function again

@@ -39,7 +39,7 @@ crafting your own customized cluster.  We'll guide you in picking a solution tha
 
 ## Picking the Right Solution
 
-If you just want to "kick the tires" on Kubernetes, we recommend the [local Docker-based](docker.md) solution.  
+If you just want to "kick the tires" on Kubernetes, we recommend the [local Docker-based](docker.md) solution.
 
 The local Docker-based solution is one of several [Local cluster](#local-machine-solutions) solutions
 that are quick to set up, but are limited to running on one machine.
@@ -50,9 +50,9 @@ solution is the easiest to create and maintain.
 [Turn-key cloud solutions](#turn-key-cloud-solutions) require only a few commands to create
 and cover a wider range of cloud providers.
 
-[Custom solutions](#custom-solutions) require more effort to setup but cover and even 
+[Custom solutions](#custom-solutions) require more effort to setup but cover and even
 they vary from step-by-step instructions to general advice for setting up
-a Kubernetes cluster from scratch. 
+a Kubernetes cluster from scratch.
 
 ### Local-machine Solutions
 
@@ -117,8 +117,8 @@ These solutions are combinations of cloud provider and OS not covered by the abo
 
 - [Offline](coreos/bare_metal_offline.md) (no internet required.  Uses CoreOS and Flannel)
 - [fedora/fedora_ansible_config.md](fedora/fedora_ansible_config.md)
-- [Fedora single node](fedora/fedora_manual_config.md) 
-- [Fedora multi node](fedora/flannel_multi_node_cluster.md) 
+- [Fedora single node](fedora/fedora_manual_config.md)
+- [Fedora multi node](fedora/flannel_multi_node_cluster.md)
 - [Centos](centos/centos_manual_config.md)
 - [Ubuntu](ubuntu.md)
 - [Docker Multi Node](docker-multinode.md)
@@ -144,11 +144,13 @@ Bare-metal           | custom       | Fedora | _none_      | [docs](fedora/fedor
 Bare-metal           | custom       | Fedora | flannel     | [docs](fedora/flannel_multi_node_cluster.md)      |          | Community ([@aveshagarwal](https://github.com/aveshagarwal))
 libvirt              | custom       | Fedora | flannel     | [docs](fedora/flannel_multi_node_cluster.md)      |          | Community ([@aveshagarwal](https://github.com/aveshagarwal))
 KVM                  | custom       | Fedora | flannel     | [docs](fedora/flannel_multi_node_cluster.md)      |          | Community ([@aveshagarwal](https://github.com/aveshagarwal))
-Mesos/GCE            |              |        |             | [docs](mesos.md)                                  |          | [Community](https://github.com/mesosphere/kubernetes-mesos) ([@jdef](https://github.com/jdef))
+Mesos/Docker         | custom       | Ubuntu | Docker      | [docs](mesos-docker.md)                           |          | Community ([Kubernetes-Mesos Authors](https://github.com/mesosphere/kubernetes-mesos/blob/master/AUTHORS.md))
+Mesos/GCE            |              |        |             | [docs](mesos.md)                                  |          | Community ([Kubernetes-Mesos Authors](https://github.com/mesosphere/kubernetes-mesos/blob/master/AUTHORS.md))
 AWS                  | CoreOS       | CoreOS | flannel     | [docs](coreos.md)                                 |          | Community
 GCE                  | CoreOS       | CoreOS | flannel     | [docs](coreos.md)                                 |          | Community [@pires](https://github.com/pires)
 Vagrant              | CoreOS       | CoreOS | flannel     | [docs](coreos.md)                                 |          | Community ( [@pires](https://github.com/pires), [@AntonioMeireles](https://github.com/AntonioMeireles) )
 Bare-metal (Offline) | CoreOS       | CoreOS | flannel     | [docs](coreos/bare_metal_offline.md)              |          | Community([@jeffbean](https://github.com/jeffbean))
+Bare-metal           | CoreOS       | CoreOS | Calico      | [docs](coreos/bare_metal_calico.md)               |          | Community([@caseydavenport](https://github.com/caseydavenport))
 CloudStack           | Ansible      | CoreOS | flannel     | [docs](cloudstack.md)                             |          | Community (@runseb)
 Vmware               |              | Debian | OVS         | [docs](vsphere.md)                                |          | Community (@pietern)
 Bare-metal           | custom       | CentOS | _none_      | [docs](centos/centos_manual_config.md)            |          | Community(@coolsvap)
@@ -158,7 +160,7 @@ Joyent               | Juju         | Ubuntu | flannel     | [docs](juju.md)    
 AWS                  | Saltstack    | Ubuntu | OVS         | [docs](aws.md)                                    |          | Community (@justinsb)
 Vmware               | CoreOS       | CoreOS | flannel     | [docs](coreos.md)                                 |          | Community (@kelseyhightower)
 Azure                | Saltstack    | Ubuntu | OpenVPN     | [docs](azure.md)                                  |          | Community
-Bare-metal           | custom       | Ubuntu | calico      | [docs](ubuntu-calico.md)                          |          | Community (@djosborne)
+Bare-metal           | custom       | Ubuntu | Calico      | [docs](ubuntu-calico.md)                          |          | Community (@djosborne)
 Bare-metal           | custom       | Ubuntu | flannel     | [docs](ubuntu.md)                                 |          | Community (@resouer @WIZARD-CXY)
 Local                |              |        | _none_      | [docs](locally.md)                                |          | Community (@preillyme)
 libvirt/KVM          | CoreOS       | CoreOS | libvirt/KVM | [docs](libvirt-coreos.md)                         |          | Community (@lhuard1A)

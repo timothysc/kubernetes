@@ -20,10 +20,10 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	versioned "github.com/GoogleCloudPlatform/kubernetes/pkg/api/v1"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/api"
+	versioned "k8s.io/kubernetes/pkg/api/v1"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 func roundTrip(t *testing.T, obj runtime.Object) runtime.Object {
@@ -150,6 +150,64 @@ func TestSetDefaultReplicationController(t *testing.T) {
 				t.Errorf("expected: %v, got: %v", rc2.Spec.Template.Labels, rc2.Labels)
 			} else {
 				t.Errorf("unexpected equality: %v", rc.Labels)
+			}
+		}
+	}
+}
+
+func TestSetDefaultDaemon(t *testing.T) {
+	tests := []struct {
+		dc                 *versioned.Daemon
+		expectLabelsChange bool
+	}{
+		{
+			dc: &versioned.Daemon{
+				Spec: versioned.DaemonSpec{
+					Template: &versioned.PodTemplateSpec{
+						ObjectMeta: versioned.ObjectMeta{
+							Labels: map[string]string{
+								"foo": "bar",
+							},
+						},
+					},
+				},
+			},
+			expectLabelsChange: true,
+		},
+		{
+			dc: &versioned.Daemon{
+				ObjectMeta: versioned.ObjectMeta{
+					Labels: map[string]string{
+						"bar": "foo",
+					},
+				},
+				Spec: versioned.DaemonSpec{
+					Template: &versioned.PodTemplateSpec{
+						ObjectMeta: versioned.ObjectMeta{
+							Labels: map[string]string{
+								"foo": "bar",
+							},
+						},
+					},
+				},
+			},
+			expectLabelsChange: false,
+		},
+	}
+
+	for _, test := range tests {
+		dc := test.dc
+		obj2 := roundTrip(t, runtime.Object(dc))
+		dc2, ok := obj2.(*versioned.Daemon)
+		if !ok {
+			t.Errorf("unexpected object: %v", dc2)
+			t.FailNow()
+		}
+		if test.expectLabelsChange != reflect.DeepEqual(dc2.Labels, dc2.Spec.Template.Labels) {
+			if test.expectLabelsChange {
+				t.Errorf("expected: %v, got: %v", dc2.Spec.Template.Labels, dc2.Labels)
+			} else {
+				t.Errorf("unexpected equality: %v", dc.Labels)
 			}
 		}
 	}

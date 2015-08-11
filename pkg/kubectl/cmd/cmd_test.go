@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -26,17 +27,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/latest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/meta"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/testapi"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/validation"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubectl"
-	cmdutil "github.com/GoogleCloudPlatform/kubernetes/pkg/kubectl/cmd/util"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubectl/resource"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/latest"
+	"k8s.io/kubernetes/pkg/api/meta"
+	"k8s.io/kubernetes/pkg/api/testapi"
+	"k8s.io/kubernetes/pkg/api/validation"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/kubectl"
+	cmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
+	"k8s.io/kubernetes/pkg/kubectl/resource"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 type internalType struct {
@@ -64,6 +65,15 @@ func (*internalType) IsAnAPIObject()  {}
 func (*externalType) IsAnAPIObject()  {}
 func (*ExternalType2) IsAnAPIObject() {}
 
+var versionErr = errors.New("not a version")
+
+func versionErrIfFalse(b bool) error {
+	if b {
+		return nil
+	}
+	return versionErr
+}
+
 func newExternalScheme() (*runtime.Scheme, meta.RESTMapper, runtime.Codec) {
 	scheme := runtime.NewScheme()
 	scheme.AddKnownTypeWithName("", "Type", &internalType{})
@@ -73,12 +83,12 @@ func newExternalScheme() (*runtime.Scheme, meta.RESTMapper, runtime.Codec) {
 
 	codec := runtime.CodecFor(scheme, "unlikelyversion")
 	validVersion := testapi.Version()
-	mapper := meta.NewDefaultRESTMapper([]string{"unlikelyversion", validVersion}, func(version string) (*meta.VersionInterfaces, bool) {
+	mapper := meta.NewDefaultRESTMapper([]string{"unlikelyversion", validVersion}, func(version string) (*meta.VersionInterfaces, error) {
 		return &meta.VersionInterfaces{
 			Codec:            runtime.CodecFor(scheme, version),
 			ObjectConvertor:  scheme,
 			MetadataAccessor: meta.NewAccessor(),
-		}, (version == validVersion || version == "unlikelyversion")
+		}, versionErrIfFalse(version == validVersion || version == "unlikelyversion")
 	})
 	for _, version := range []string{"unlikelyversion", validVersion} {
 		for kind := range scheme.KnownTypes(version) {
@@ -251,7 +261,7 @@ func ExamplePrintReplicationControllerWithNamespace() {
 		Codec:  codec,
 		Client: nil,
 	}
-	cmd := NewCmdRun(f, os.Stdout)
+	cmd := NewCmdRun(f, os.Stdin, os.Stdout, os.Stderr)
 	ctrl := &api.ReplicationController{
 		ObjectMeta: api.ObjectMeta{
 			Name:      "foo",
@@ -293,7 +303,7 @@ func ExamplePrintPodWithWideFormat() {
 		Client: nil,
 	}
 	nodeName := "kubernetes-minion-abcd"
-	cmd := NewCmdRun(f, os.Stdout)
+	cmd := NewCmdRun(f, os.Stdin, os.Stdout, os.Stderr)
 	pod := &api.Pod{
 		ObjectMeta: api.ObjectMeta{
 			Name:              "test1",
@@ -327,7 +337,7 @@ func ExamplePrintServiceWithNamespacesAndLabels() {
 		Codec:  codec,
 		Client: nil,
 	}
-	cmd := NewCmdRun(f, os.Stdout)
+	cmd := NewCmdRun(f, os.Stdin, os.Stdout, os.Stderr)
 	svc := &api.ServiceList{
 		Items: []api.Service{
 			{

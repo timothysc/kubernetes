@@ -36,10 +36,18 @@
 
 {% set params = "--master=127.0.0.1:8080" + " " + cluster_name + " " + cluster_cidr + " " + allocate_node_cidrs + " " + cloud_provider  + " " + cloud_config + service_account_key + pillar['log_level'] + " " + root_ca_file -%}
 
+# test_args has to be kept at the end, so they'll overwrite any prior configuration
+{% if pillar['controller_manager_test_args'] is defined -%}
+{% set params = params + " " + pillar['controller_manager_test_args'] -%}
+{% endif -%}
+
 {
 "apiVersion": "v1",
 "kind": "Pod",
-"metadata": {"name":"kube-controller-manager"},
+"metadata": {
+  "name":"kube-controller-manager",
+  "namespace": "kube-system"
+},
 "spec":{
 "hostNetwork": true,
 "containers":[
@@ -58,8 +66,9 @@
                ],
     "livenessProbe": {
       "httpGet": {
-        "path": "/healthz",
-        "port": 10252
+        "host": "127.0.0.1",
+        "port": 10252,
+        "path": "/healthz"
       },
       "initialDelaySeconds": 15,
       "timeoutSeconds": 15

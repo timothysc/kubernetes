@@ -19,8 +19,8 @@ package v1
 import (
 	"strings"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 func addDefaultingFuncs() {
@@ -42,6 +42,21 @@ func addDefaultingFuncs() {
 			if obj.Spec.Replicas == nil {
 				obj.Spec.Replicas = new(int)
 				*obj.Spec.Replicas = 1
+			}
+		},
+		func(obj *Daemon) {
+			var labels map[string]string
+			if obj.Spec.Template != nil {
+				labels = obj.Spec.Template.Labels
+			}
+			// TODO: support templates defined elsewhere when we support them in the API
+			if labels != nil {
+				if len(obj.Spec.Selector) == 0 {
+					obj.Spec.Selector = labels
+				}
+				if len(obj.Labels) == 0 {
+					obj.Labels = labels
+				}
 			}
 		},
 		func(obj *Volume) {

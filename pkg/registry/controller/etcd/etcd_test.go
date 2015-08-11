@@ -22,17 +22,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/latest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/rest/resttest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	etcdgeneric "github.com/GoogleCloudPlatform/kubernetes/pkg/registry/generic/etcd"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools/etcdtest"
 	"github.com/coreos/go-etcd/etcd"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/api/latest"
+	"k8s.io/kubernetes/pkg/api/rest/resttest"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	etcdgeneric "k8s.io/kubernetes/pkg/registry/generic/etcd"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/storage"
+	etcdstorage "k8s.io/kubernetes/pkg/storage/etcd"
+	"k8s.io/kubernetes/pkg/tools"
+	"k8s.io/kubernetes/pkg/tools/etcdtest"
 )
 
 const (
@@ -40,10 +42,10 @@ const (
 	FAIL
 )
 
-func newEtcdStorage(t *testing.T) (*tools.FakeEtcdClient, tools.StorageInterface) {
+func newEtcdStorage(t *testing.T) (*tools.FakeEtcdClient, storage.Interface) {
 	fakeEtcdClient := tools.NewFakeEtcdClient(t)
 	fakeEtcdClient.TestIndex = true
-	etcdStorage := tools.NewEtcdStorage(fakeEtcdClient, latest.Codec, etcdtest.PathPrefix())
+	etcdStorage := etcdstorage.NewEtcdStorage(fakeEtcdClient, latest.Codec, etcdtest.PathPrefix())
 	return fakeEtcdClient, etcdStorage
 }
 
@@ -624,10 +626,10 @@ func TestEtcdWatchControllersFields(t *testing.T) {
 		},
 	}
 	testEtcdActions := []string{
-		tools.EtcdCreate,
-		tools.EtcdSet,
-		tools.EtcdCAS,
-		tools.EtcdDelete}
+		etcdstorage.EtcdCreate,
+		etcdstorage.EtcdSet,
+		etcdstorage.EtcdCAS,
+		etcdstorage.EtcdDelete}
 
 	controller := &api.ReplicationController{
 		ObjectMeta: api.ObjectMeta{
@@ -653,7 +655,7 @@ func TestEtcdWatchControllersFields(t *testing.T) {
 				node := &etcd.Node{
 					Value: string(controllerBytes),
 				}
-				if action == tools.EtcdDelete {
+				if action == etcdstorage.EtcdDelete {
 					prevNode = node
 				}
 				fakeClient.WaitForWatchCompletion()

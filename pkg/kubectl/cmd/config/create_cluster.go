@@ -21,12 +21,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/clientcmd"
-	clientcmdapi "github.com/GoogleCloudPlatform/kubernetes/pkg/client/clientcmd/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/client/clientcmd"
+	clientcmdapi "k8s.io/kubernetes/pkg/client/clientcmd/api"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 type createClusterOptions struct {
@@ -94,10 +95,14 @@ func (o createClusterOptions) run() error {
 		return err
 	}
 
-	cluster := o.modifyCluster(config.Clusters[o.name])
-	config.Clusters[o.name] = cluster
+	startingStanza, exists := config.Clusters[o.name]
+	if !exists {
+		startingStanza = clientcmdapi.NewCluster()
+	}
+	cluster := o.modifyCluster(*startingStanza)
+	config.Clusters[o.name] = &cluster
 
-	if err := ModifyConfig(o.configAccess, *config); err != nil {
+	if err := ModifyConfig(o.configAccess, *config, true); err != nil {
 		return err
 	}
 
@@ -129,6 +134,7 @@ func (o *createClusterOptions) modifyCluster(existingCluster clientcmdapi.Cluste
 			modifiedCluster.InsecureSkipTLSVerify = false
 			modifiedCluster.CertificateAuthority = ""
 		} else {
+			caPath, _ = filepath.Abs(caPath)
 			modifiedCluster.CertificateAuthority = caPath
 			// Specifying a certificate authority file clears certificate authority data and insecure mode
 			if caPath != "" {

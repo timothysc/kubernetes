@@ -19,11 +19,11 @@ package autoprovision
 import (
 	"testing"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/admission"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/cache"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/testclient"
+	"k8s.io/kubernetes/pkg/admission"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/client/cache"
+	"k8s.io/kubernetes/pkg/client/testclient"
 )
 
 // TestAdmission verifies a namespace is created on create requests for namespace managed resources
@@ -49,7 +49,7 @@ func TestAdmission(t *testing.T) {
 	if len(actions) != 1 {
 		t.Errorf("Expected a create-namespace request")
 	}
-	if actions[0].Action != "create-namespace" {
+	if !actions[0].Matches("create", "namespaces") {
 		t.Errorf("Expected a create-namespace request to be made via the client")
 	}
 }

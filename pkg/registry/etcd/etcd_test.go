@@ -20,34 +20,32 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/latest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/registry/endpoint"
-	endpointetcd "github.com/GoogleCloudPlatform/kubernetes/pkg/registry/endpoint/etcd"
-	etcdgeneric "github.com/GoogleCloudPlatform/kubernetes/pkg/registry/generic/etcd"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/registry/pod"
-	podetcd "github.com/GoogleCloudPlatform/kubernetes/pkg/registry/pod/etcd"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/tools/etcdtest"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/api/latest"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/registry/endpoint"
+	endpointetcd "k8s.io/kubernetes/pkg/registry/endpoint/etcd"
+	etcdgeneric "k8s.io/kubernetes/pkg/registry/generic/etcd"
+	"k8s.io/kubernetes/pkg/runtime"
+	etcdstorage "k8s.io/kubernetes/pkg/storage/etcd"
+	"k8s.io/kubernetes/pkg/tools"
+	"k8s.io/kubernetes/pkg/tools/etcdtest"
 
 	"github.com/coreos/go-etcd/etcd"
 )
 
 func NewTestEtcdRegistry(client tools.EtcdClient) *Registry {
-	storage := tools.NewEtcdStorage(client, latest.Codec, etcdtest.PathPrefix())
-	registry := NewRegistry(storage, nil, nil)
+	storage := etcdstorage.NewEtcdStorage(client, latest.Codec, etcdtest.PathPrefix())
+	registry := NewRegistry(storage, nil)
 	return registry
 }
 
 func NewTestEtcdRegistryWithPods(client tools.EtcdClient) *Registry {
-	etcdStorage := tools.NewEtcdStorage(client, latest.Codec, etcdtest.PathPrefix())
-	podStorage := podetcd.NewStorage(etcdStorage, nil)
+	etcdStorage := etcdstorage.NewEtcdStorage(client, latest.Codec, etcdtest.PathPrefix())
 	endpointStorage := endpointetcd.NewStorage(etcdStorage)
-	registry := NewRegistry(etcdStorage, pod.NewRegistry(podStorage.Pod), endpoint.NewRegistry(endpointStorage))
+	registry := NewRegistry(etcdStorage, endpoint.NewRegistry(endpointStorage))
 	return registry
 }
 

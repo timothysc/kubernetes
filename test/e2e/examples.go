@@ -24,19 +24,20 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 )
 
 const (
-	podListTimeout     = time.Minute
-	serverStartTimeout = podStartTimeout + 3*time.Minute
-	dnsReadyTimeout    = time.Minute
+	podListTimeout          = time.Minute
+	serverStartTimeout      = podStartTimeout + 3*time.Minute
+	dnsReadyTimeout         = time.Minute
+	endpointRegisterTimeout = time.Minute
 )
 
 const queryDnsPythonTemplate string = `
@@ -161,7 +162,7 @@ var _ = Describe("Examples e2e", func() {
 			forEachPod(c, ns, "component", "flower", func(pod api.Pod) {
 				// Do nothing. just wait for it to be up and running.
 			})
-			content, err := makeHttpRequestToService(c, ns, "flower-service", "/")
+			content, err := makeHttpRequestToService(c, ns, "flower-service", "/", endpointRegisterTimeout)
 			Expect(err).NotTo(HaveOccurred())
 			if !strings.Contains(content, "<title>Celery Flower</title>") {
 				Failf("Flower HTTP request failed")
@@ -188,7 +189,7 @@ var _ = Describe("Examples e2e", func() {
 			Expect(err).NotTo(HaveOccurred())
 			_, err = lookForStringInLog(ns, "spark-master", "spark-master", "Starting Spark master at", serverStartTimeout)
 			Expect(err).NotTo(HaveOccurred())
-			_, err = lookForStringInLog(ns, "spark-driver", "spark-driver", "Starting Spark driver at", serverStartTimeout)
+			_, err = lookForStringInLog(ns, "spark-driver", "spark-driver", "Use kubectl exec", serverStartTimeout)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("starting workers")
@@ -392,7 +393,7 @@ var _ = Describe("Examples e2e", func() {
 			err := waitForPodRunningInNamespace(c, "rethinkdb-admin", ns)
 			Expect(err).NotTo(HaveOccurred())
 			checkDbInstances()
-			content, err := makeHttpRequestToService(c, ns, "rethinkdb-admin", "/")
+			content, err := makeHttpRequestToService(c, ns, "rethinkdb-admin", "/", endpointRegisterTimeout)
 			Expect(err).NotTo(HaveOccurred())
 			if !strings.Contains(content, "<title>RethinkDB Administration Console</title>") {
 				Failf("RethinkDB console is not running")
@@ -526,15 +527,22 @@ var _ = Describe("Examples e2e", func() {
 	})
 })
 
-func makeHttpRequestToService(c *client.Client, ns, service, path string) (string, error) {
-	result, err := c.Get().
-		Prefix("proxy").
-		Namespace(ns).
-		Resource("services").
-		Name(service).
-		Suffix(path).
-		Do().
-		Raw()
+func makeHttpRequestToService(c *client.Client, ns, service, path string, timeout time.Duration) (string, error) {
+	var result []byte
+	var err error
+	for t := time.Now(); time.Since(t) < timeout; time.Sleep(poll) {
+		result, err = c.Get().
+			Prefix("proxy").
+			Namespace(ns).
+			Resource("services").
+			Name(service).
+			Suffix(path).
+			Do().
+			Raw()
+		if err != nil {
+			break
+		}
+	}
 	return string(result), err
 }
 

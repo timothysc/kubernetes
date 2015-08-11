@@ -90,6 +90,9 @@ CTLRMGR_PORT=${CTLRMGR_PORT:-10252}
 PROXY_PORT=${PROXY_PORT:-8001}
 PROXY_HOST=127.0.0.1 # kubectl only serves on localhost.
 
+# ensure ~/.kube/config isn't loaded by tests
+HOME="${KUBE_TEMP}"
+
 # Check kubectl
 kube::log::status "Running kubectl with no options"
 "${KUBE_OUTPUT_HOSTBIN}/kubectl"
@@ -224,7 +227,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create "${kube_flags[@]}" -f docs/user-guide/limitrange/valid-pod.yaml
+  kubectl create "${kube_flags[@]}" -f docs/admin/limitrange/valid-pod.yaml
   # Post-condition: valid-pod POD is running
   kubectl get "${kube_flags[@]}" pods -o json
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
@@ -257,7 +260,7 @@ runTests() {
   # Pre-condition: valid-pod POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
   # Command
-  kubectl delete -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl delete -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   # Post-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
 
@@ -265,7 +268,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   # Post-condition: valid-pod POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
@@ -281,7 +284,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   # Post-condition: valid-pod POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
@@ -313,7 +316,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   kubectl create -f examples/redis/redis-proxy.yaml "${kube_flags[@]}"
   # Post-condition: valid-pod and redis-proxy PODs are running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'redis-proxy:valid-pod:'
@@ -330,7 +333,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   kubectl create -f examples/redis/redis-proxy.yaml "${kube_flags[@]}"
   # Post-condition: valid-pod and redis-proxy PODs are running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'redis-proxy:valid-pod:'
@@ -347,7 +350,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   # Post-condition: valid-pod POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
@@ -371,7 +374,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   # Post-condition: valid-pod POD is running
   kube::test::get_object_assert pods "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
@@ -437,7 +440,7 @@ runTests() {
   # Pre-condition: no POD is running
   kube::test::get_object_assert 'pods --namespace=other' "{{range.items}}{{$id_field}}:{{end}}" ''
   # Command
-  kubectl create "${kube_flags[@]}" --namespace=other -f docs/user-guide/limitrange/valid-pod.yaml
+  kubectl create "${kube_flags[@]}" --namespace=other -f docs/admin/limitrange/valid-pod.yaml
   # Post-condition: valid-pod POD is running
   kube::test::get_object_assert 'pods --namespace=other' "{{range.items}}{{$id_field}}:{{end}}" 'valid-pod:'
 
@@ -614,6 +617,17 @@ __EOF__
   # Post-condition: 3 replicas
   kube::test::get_object_assert 'rc frontend' "{{$rc_replicas_field}}" '3'
 
+  ### Scale multiple replication controllers
+  kubectl create -f examples/guestbook/redis-master-controller.yaml "${kube_flags[@]}"
+  kubectl create -f examples/guestbook/redis-slave-controller.yaml "${kube_flags[@]}"
+  # Command
+  kubectl scale rc/redis-master rc/redis-slave --replicas=4
+  # Post-condition: 4 replicas each
+  kube::test::get_object_assert 'rc redis-master' "{{$rc_replicas_field}}" '4'
+  kube::test::get_object_assert 'rc redis-slave' "{{$rc_replicas_field}}" '4'
+  # Clean-up
+  kubectl delete rc redis-{master,slave} "${kube_flags[@]}"
+
   ### Expose replication controller as service
   # Pre-condition: 3 replicas
   kube::test::get_object_assert 'rc frontend' "{{$rc_replicas_field}}" '3'
@@ -626,7 +640,7 @@ __EOF__
   # Post-condition: service exists and the port is unnamed
   kube::test::get_object_assert 'service frontend-2' "{{$port_name}} {{$port_field}}" '<no value> 443'
   # Command
-  kubectl create -f docs/user-guide/limitrange/valid-pod.yaml "${kube_flags[@]}"
+  kubectl create -f docs/admin/limitrange/valid-pod.yaml "${kube_flags[@]}"
   kubectl expose pod valid-pod --port=444 --name=frontend-3 "${kube_flags[@]}"
   # Post-condition: service exists and the port is unnamed
   kube::test::get_object_assert 'service frontend-3' "{{$port_name}} {{$port_field}}" '<no value> 444'

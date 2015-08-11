@@ -31,22 +31,22 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/latest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/record"
-	kubecontainer "github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/container"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/lifecycle"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/metrics"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/network"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/prober"
-	kubeletTypes "github.com/GoogleCloudPlatform/kubernetes/pkg/kubelet/types"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/probe"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/securitycontext"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/types"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/glog"
 	"github.com/golang/groupcache/lru"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/latest"
+	"k8s.io/kubernetes/pkg/client/record"
+	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
+	"k8s.io/kubernetes/pkg/kubelet/lifecycle"
+	"k8s.io/kubernetes/pkg/kubelet/metrics"
+	"k8s.io/kubernetes/pkg/kubelet/network"
+	"k8s.io/kubernetes/pkg/kubelet/prober"
+	kubeletTypes "k8s.io/kubernetes/pkg/kubelet/types"
+	"k8s.io/kubernetes/pkg/probe"
+	"k8s.io/kubernetes/pkg/securitycontext"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 const (
@@ -593,6 +593,9 @@ func (dm *DockerManager) runContainer(
 			CPUShares:  cpuShares,
 			WorkingDir: container.WorkingDir,
 			Labels:     labels,
+			// Interactive containers:
+			OpenStdin: container.Stdin,
+			Tty:       container.TTY,
 		},
 	}
 
@@ -1012,6 +1015,7 @@ func (dm *DockerManager) AttachContainer(containerId string, stdin io.Reader, st
 		InputStream:  stdin,
 		OutputStream: stdout,
 		ErrorStream:  stderr,
+		Stream:       true,
 		Logs:         true,
 		Stdin:        stdin != nil,
 		Stdout:       stdout != nil,

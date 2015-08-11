@@ -21,7 +21,9 @@ import (
 	"errors"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -29,10 +31,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -104,10 +106,10 @@ var _ = Describe("Kubectl client", func() {
 			runKubectl("create", "-f", nautilusPath, fmt.Sprintf("--namespace=%v", ns))
 			validateController(c, nautilusImage, 2, "update-demo", updateDemoSelector, getUDData("nautilus.jpg", ns), ns)
 			By("scaling down the replication controller")
-			runKubectl("scale", "rc", "update-demo-nautilus", "--replicas=1", fmt.Sprintf("--namespace=%v", ns))
+			runKubectl("scale", "rc", "update-demo-nautilus", "--replicas=1", "--timeout=5m", fmt.Sprintf("--namespace=%v", ns))
 			validateController(c, nautilusImage, 1, "update-demo", updateDemoSelector, getUDData("nautilus.jpg", ns), ns)
 			By("scaling up the replication controller")
-			runKubectl("scale", "rc", "update-demo-nautilus", "--replicas=2", fmt.Sprintf("--namespace=%v", ns))
+			runKubectl("scale", "rc", "update-demo-nautilus", "--replicas=2", "--timeout=5m", fmt.Sprintf("--namespace=%v", ns))
 			validateController(c, nautilusImage, 2, "update-demo", updateDemoSelector, getUDData("nautilus.jpg", ns), ns)
 		})
 
@@ -544,8 +546,35 @@ var _ = Describe("Kubectl client", func() {
 				Failf("Expected at least one supported apiversion, got %v", apiVersions)
 			}
 		})
-	})
 
+		It("should support --unix-socket=/path", func() {
+			By("Starting the proxy")
+			tmpdir, err := ioutil.TempDir("", "kubectl-proxy-unix")
+			if err != nil {
+				Failf("Failed to create temporary directory: %v", err)
+			}
+			path := filepath.Join(tmpdir, "test")
+			defer os.Remove(path)
+			defer os.Remove(tmpdir)
+			cmd := kubectlCmd("proxy", fmt.Sprintf("--unix-socket=%s", path))
+			stdout, stderr, err := startCmdAndStreamOutput(cmd)
+			if err != nil {
+				Failf("Failed to start kubectl command: %v", err)
+			}
+			defer stdout.Close()
+			defer stderr.Close()
+			defer tryKill(cmd)
+			buf := make([]byte, 128)
+			if _, err = stdout.Read(buf); err != nil {
+				Failf("Expected output from kubectl proxy: %v", err)
+			}
+			By("retrieving proxy /api/ output")
+			_, err = curlUnix("http://unused/api", path)
+			if err != nil {
+				Failf("Failed get of /api at %s: %v", path, err)
+			}
+		})
+	})
 })
 
 // Checks whether the output split by line contains the required elements.
@@ -603,8 +632,19 @@ func startProxyServer() (int, *exec.Cmd, error) {
 	return -1, cmd, fmt.Errorf("Failed to parse port from proxy stdout: %s", output)
 }
 
-func curl(addr string) (string, error) {
-	resp, err := http.Get(addr)
+func curlUnix(url string, path string) (string, error) {
+	dial := func(proto, addr string) (net.Conn, error) {
+		return net.Dial("unix", path)
+	}
+	transport := &http.Transport{
+		Dial: dial,
+	}
+	return curlTransport(url, transport)
+}
+
+func curlTransport(url string, transport *http.Transport) (string, error) {
+	client := &http.Client{Transport: transport}
+	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -614,6 +654,10 @@ func curl(addr string) (string, error) {
 		return "", err
 	}
 	return string(body[:]), nil
+}
+
+func curl(url string) (string, error) {
+	return curlTransport(url, &http.Transport{})
 }
 
 func validateGuestbookApp(c *client.Client, ns string) {

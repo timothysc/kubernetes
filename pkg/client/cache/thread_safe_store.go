@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 // ThreadSafeStore is an interface that allows concurrent access to a storage backend.
@@ -150,7 +150,7 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 		}
 	}
 
-	list := []interface{}{}
+	list := make([]interface{}, 0, returnKeySet.Len())
 	for absoluteKey := range returnKeySet {
 		list = append(list, c.items[absoluteKey])
 	}

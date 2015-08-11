@@ -32,21 +32,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	apierrs "github.com/GoogleCloudPlatform/kubernetes/pkg/api/errors"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/cache"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/clientcmd"
-	clientcmdapi "github.com/GoogleCloudPlatform/kubernetes/pkg/client/clientcmd/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/cloudprovider"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/kubectl"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util/wait"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/watch"
+	"k8s.io/kubernetes/pkg/api"
+	apierrs "k8s.io/kubernetes/pkg/api/errors"
+	"k8s.io/kubernetes/pkg/api/resource"
+	"k8s.io/kubernetes/pkg/client"
+	"k8s.io/kubernetes/pkg/client/cache"
+	"k8s.io/kubernetes/pkg/client/clientcmd"
+	clientcmdapi "k8s.io/kubernetes/pkg/client/clientcmd/api"
+	"k8s.io/kubernetes/pkg/cloudprovider"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/kubectl"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/util/wait"
+	"k8s.io/kubernetes/pkg/watch"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/prometheus/client_golang/extraction"
@@ -1480,15 +1480,39 @@ func NodeSSHHosts(c *client.Client) ([]string, error) {
 // is no error performing the SSH, the stdout, stderr, and exit code are
 // returned.
 func SSH(cmd, host, provider string) (string, string, int, error) {
+	return sshCore(cmd, host, provider, false)
+}
+
+// SSHVerbose is just like SSH, but it logs the command, user, host, stdout,
+// stderr, exit code, and error.
+func SSHVerbose(cmd, host, provider string) (string, string, int, error) {
+	return sshCore(cmd, host, provider, true)
+}
+
+func sshCore(cmd, host, provider string, verbose bool) (string, string, int, error) {
 	// Get a signer for the provider.
 	signer, err := getSigner(provider)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("error getting signer for provider %s: '%v'", provider, err)
 	}
 
+	// RunSSHCommand will default to Getenv("USER") if user == "", but we're
+	// defaulting here as well for logging clarity.
 	user := os.Getenv("KUBE_SSH_USER")
-	// RunSSHCommand will default to Getenv("USER") if user == ""
-	return util.RunSSHCommand(cmd, user, host, signer)
+	if user == "" {
+		user = os.Getenv("USER")
+	}
+
+	stdout, stderr, code, err := util.RunSSHCommand(cmd, user, host, signer)
+	if verbose {
+		remote := fmt.Sprintf("%s@%s", user, host)
+		Logf("[%s] Running    `%s`", remote, cmd)
+		Logf("[%s] stdout:    %q", remote, stdout)
+		Logf("[%s] stderr:    %q", remote, stderr)
+		Logf("[%s] exit code: %d", remote, code)
+		Logf("[%s] error:     %v", remote, err)
+	}
+	return stdout, stderr, code, err
 }
 
 // getSigner returns an ssh.Signer for the provider ("gce", etc.) that can be

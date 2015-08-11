@@ -35,7 +35,7 @@ Documentation for other releases can be found at
 
 
 In Kubernetes, authorization happens as a separate step from authentication.
-See the [authentication documentation](authentication.md) for an 
+See the [authentication documentation](authentication.md) for an
 overview of authentication.
 
 Authorization applies to all HTTP accesses on the main (secure) apiserver port.
@@ -45,9 +45,9 @@ the request, (such as user, resource, and namespace) with access
 policies.  An API call must be allowed by some policy in order to proceed.
 
 The following implementations are available, and are selected by flag:
-  - `--authorization_mode=AlwaysDeny`
-  - `--authorization_mode=AlwaysAllow`
-  - `--authorization_mode=ABAC`
+  - `--authorization-mode=AlwaysDeny`
+  - `--authorization-mode=AlwaysAllow`
+  - `--authorization-mode=ABAC`
 
 `AlwaysDeny` blocks all requests (used in tests).
 `AlwaysAllow` allows all requests; use if you don't need authorization.
@@ -60,8 +60,8 @@ The following implementations are available, and are selected by flag:
 A request has 4 attributes that can be considered for authorization:
   - user (the user-string which a user was authenticated as).
   - whether the request is readonly (GETs are readonly)
-  - what resource is being accessed 
-    - applies only to the API endpoints, such as 
+  - what resource is being accessed
+    - applies only to the API endpoints, such as
         `/api/v1/namespaces/default/pods`.  For miscellaneous endpoints, like `/version`, the
         resource is the empty string.
   - the namespace of the object being access, or the empty string if the
@@ -72,13 +72,13 @@ to assist in policy management.
 
 ### Policy File Format
 
-For mode `ABAC`, also specify `--authorization_policy_file=SOME_FILENAME`.
+For mode `ABAC`, also specify `--authorization-policy-file=SOME_FILENAME`.
 
 The file format is [one JSON object per line](http://jsonlines.org/).  There should be no enclosing list or map, just
 one map per line.
 
 Each line is a "policy object".  A policy object is a map with the following properties:
-  - `user`, type string; the user-string from `--token_auth_file`
+  - `user`, type string; the user-string from `--token-auth-file`
   - `readonly`, type boolean, when true, means that the policy only applies to GET
       operations.
   - `resource`, type string; a resource from an URL, such as `pods`.
@@ -95,7 +95,7 @@ interface.
 A request has attributes which correspond to the properties of a policy object.
 
 When a request is received, the attributes are determined.  Unknown attributes
-are set to the zero value of its type (e.g. empty string, 0, false). 
+are set to the zero value of its type (e.g. empty string, 0, false).
 
 An unset property will match any value of the corresponding
 attribute.  An unset attribute will match any value of the corresponding property.

@@ -20,12 +20,12 @@ import (
 	"os"
 	"testing"
 
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/latest"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/client/testclient"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/types"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util/mount"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/api"
+	"k8s.io/kubernetes/pkg/api/latest"
+	"k8s.io/kubernetes/pkg/client/testclient"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util/mount"
+	"k8s.io/kubernetes/pkg/volume"
 )
 
 func TestCanSupport(t *testing.T) {
@@ -76,8 +76,8 @@ type fakePDManager struct{}
 
 // TODO(jonesdl) To fully test this, we could create a loopback device
 // and mount that instead.
-func (fake *fakePDManager) AttachAndMountDisk(pd *awsElasticBlockStore, globalPDPath string) error {
-	globalPath := makeGlobalPDPath(pd.plugin.host, pd.volumeID)
+func (fake *fakePDManager) AttachAndMountDisk(b *awsElasticBlockStoreBuilder, globalPDPath string) error {
+	globalPath := makeGlobalPDPath(b.plugin.host, b.volumeID)
 	err := os.MkdirAll(globalPath, 0750)
 	if err != nil {
 		return err
@@ -85,8 +85,8 @@ func (fake *fakePDManager) AttachAndMountDisk(pd *awsElasticBlockStore, globalPD
 	return nil
 }
 
-func (fake *fakePDManager) DetachDisk(pd *awsElasticBlockStore) error {
-	globalPath := makeGlobalPDPath(pd.plugin.host, pd.volumeID)
+func (fake *fakePDManager) DetachDisk(c *awsElasticBlockStoreCleaner) error {
+	globalPath := makeGlobalPDPath(c.plugin.host, c.volumeID)
 	err := os.RemoveAll(globalPath)
 	if err != nil {
 		return err
@@ -204,5 +204,34 @@ func TestPersistentClaimReadOnlyFlag(t *testing.T) {
 
 	if !builder.IsReadOnly() {
 		t.Errorf("Expected true for builder.IsReadOnly")
+	}
+}
+
+func TestBuilderAndCleanerTypeAssert(t *testing.T) {
+	plugMgr := volume.VolumePluginMgr{}
+	plugMgr.InitPlugins(ProbeVolumePlugins(), volume.NewFakeVolumeHost("/tmp/fake", nil, nil))
+
+	plug, err := plugMgr.FindPluginByName("kubernetes.io/aws-ebs")
+	if err != nil {
+		t.Errorf("Can't find the plugin by name")
+	}
+	spec := &api.Volume{
+		Name: "vol1",
+		VolumeSource: api.VolumeSource{
+			AWSElasticBlockStore: &api.AWSElasticBlockStoreVolumeSource{
+				VolumeID: "pd",
+				FSType:   "ext4",
+			},
+		},
+	}
+
+	builder, err := plug.(*awsElasticBlockStorePlugin).newBuilderInternal(volume.NewSpecFromVolume(spec), types.UID("poduid"), &fakePDManager{}, &mount.FakeMounter{})
+	if _, ok := builder.(volume.Cleaner); ok {
+		t.Errorf("Volume Builder can be type-assert to Cleaner")
+	}
+
+	cleaner, err := plug.(*awsElasticBlockStorePlugin).newCleanerInternal("vol1", types.UID("poduid"), &fakePDManager{}, &mount.FakeMounter{})
+	if _, ok := cleaner.(volume.Builder); ok {
+		t.Errorf("Volume Cleaner can be type-assert to Builder")
 	}
 }

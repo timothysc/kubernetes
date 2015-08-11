@@ -133,7 +133,7 @@ When using Docker:
 **TODO: document behavior for rkt**
 
 If a container exceeds its memory limit, it may be terminated.  If it is restartable, it will be
-restarted by kubelet, as will any other type of runtime failure.  
+restarted by kubelet, as will any other type of runtime failure.
 
 A container may or may not be allowed to exceed its CPU limit for extended periods of time.
 However, it will not be killed for excessive CPU usage.
@@ -178,7 +178,7 @@ The [resource quota](../admin/resource-quota.md) feature can be configured
 to limit the total amount of resources that can be consumed.  If used in conjunction
 with namespaces, it can prevent one team from hogging all the resources.
 
-### My container is terminated 
+### My container is terminated
 
 Your container may be terminated because it's resource-starved. To check if a container is being killed because it is hitting a resource limit, call `kubectl describe pod`
 on the pod you are interested in:
@@ -219,7 +219,7 @@ Events:
 
 The `Restart Count:  5` indicates that the `simmemleak` container in this pod was terminated and restarted 5 times.
 
-Once [#10861](https://github.com/GoogleCloudPlatform/kubernetes/issues/10861) is resolved the reason for the termination of the last container will also be printed in this output.
+Once [#10861](http://issue.k8s.io/10861) is resolved the reason for the termination of the last container will also be printed in this output.
 
 Until then you can call `get pod` with the `-o template -t ...` option to fetch the status of previously terminated containers:
 
@@ -243,7 +243,7 @@ resource, and a framework for adding custom [resource types](../design/resources
 
 The current system does not facilitate overcommitment of resources because resources reserved
 with container limits are assured.  It is planned to support multiple levels of [Quality of
-Service](https://github.com/GoogleCloudPlatform/kubernetes/issues/168).
+Service](http://issue.k8s.io/168).
 
 Currently, one unit of CPU means different things on different cloud providers, and on different
 machine types within the same cloud providers.  For example, on AWS, the capacity of a node

@@ -17,12 +17,12 @@ limitations under the License.
 package api
 
 import (
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/api/resource"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/fields"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/labels"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/runtime"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/types"
-	"github.com/GoogleCloudPlatform/kubernetes/pkg/util"
+	"k8s.io/kubernetes/pkg/api/resource"
+	"k8s.io/kubernetes/pkg/fields"
+	"k8s.io/kubernetes/pkg/labels"
+	"k8s.io/kubernetes/pkg/runtime"
+	"k8s.io/kubernetes/pkg/types"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 // Common string formats
@@ -726,6 +726,11 @@ type Container struct {
 	ImagePullPolicy PullPolicy `json:"imagePullPolicy"`
 	// Optional: SecurityContext defines the security options the pod should be run with
 	SecurityContext *SecurityContext `json:"securityContext,omitempty"`
+
+	// Variables for interactive containers, these have very specialized use-cases (e.g. debugging)
+	// and shouldn't be used for general purpose containers.
+	Stdin bool `json:"stdin,omitempty" description:"Whether this container should allocate a buffer for stdin in the container runtime; default is false"`
+	TTY   bool `json:"tty,omitempty" description:"Whether this container should allocate a TTY for itself, also requires 'stdin' to be true; default is false"`
 }
 
 // Handler defines a specific action that should be taken
@@ -1047,6 +1052,54 @@ type ReplicationControllerList struct {
 	ListMeta `json:"metadata,omitempty"`
 
 	Items []ReplicationController `json:"items"`
+}
+
+// DaemonSpec is the specification of a daemon.
+type DaemonSpec struct {
+	// Selector is a label query over pods that are managed by the daemon.
+	Selector map[string]string `json:"selector"`
+
+	// Template is the object that describes the pod that will be created.
+	// The Daemon will create exactly one copy of this pod on every node
+	// that matches the template's node selector (or on every node if no node
+	// selector is specified).
+	Template *PodTemplateSpec `json:"template,omitempty"`
+}
+
+// DaemonStatus represents the current status of a daemon.
+type DaemonStatus struct {
+	// CurrentNumberScheduled is the number of nodes that are running exactly 1 copy of the
+	// daemon and are supposed to run the daemon.
+	CurrentNumberScheduled int `json:"currentNumberScheduled"`
+
+	// NumberMisscheduled is the number of nodes that are running the daemon, but are
+	// not supposed to run the daemon.
+	NumberMisscheduled int `json:"numberMisscheduled"`
+
+	// DesiredNumberScheduled is the total number of nodes that should be running the daemon
+	// (including nodes correctly running the daemon).
+	DesiredNumberScheduled int `json:"desiredNumberScheduled"`
+}
+
+// Daemon represents the configuration of a daemon.
+type Daemon struct {
+	TypeMeta   `json:",inline"`
+	ObjectMeta `json:"metadata,omitempty"`
+
+	// Spec defines the desired behavior of this daemon.
+	Spec DaemonSpec `json:"spec,omitempty"`
+
+	// Status is the current status of this daemon. This data may be
+	// out of date by some window of time.
+	Status DaemonStatus `json:"status,omitempty"`
+}
+
+// DaemonList is a collection of daemon.
+type DaemonList struct {
+	TypeMeta `json:",inline"`
+	ListMeta `json:"metadata,omitempty"`
+
+	Items []Daemon `json:"items"`
 }
 
 const (
@@ -1517,6 +1570,27 @@ type PodLogOptions struct {
 	Previous bool
 }
 
+// PodAttachOptions is the query options to a Pod's remote attach call
+// TODO: merge w/ PodExecOptions below for stdin, stdout, etc
+type PodAttachOptions struct {
+	TypeMeta `json:",inline"`
+
+	// Stdin if true indicates that stdin is to be redirected for the attach call
+	Stdin bool `json:"stdin,omitempty"`
+
+	// Stdout if true indicates that stdout is to be redirected for the attach call
+	Stdout bool `json:"stdout,omitempty"`
+
+	// Stderr if true indicates that stderr is to be redirected for the attach call
+	Stderr bool `json:"stderr,omitempty"`
+
+	// TTY if true indicates that a tty will be allocated for the attach call
+	TTY bool `json:"tty,omitempty"`
+
+	// Container to attach to.
+	Container string `json:"container,omitempty"`
+}
+
 // PodExecOptions is the query options to a Pod's remote exec call
 type PodExecOptions struct {
 	TypeMeta
@@ -1901,6 +1975,8 @@ const (
 	ResourceServices ResourceName = "services"
 	// ReplicationControllers, number
 	ResourceReplicationControllers ResourceName = "replicationcontrollers"
+	// Daemon, number
+	ResourceDaemon ResourceName = "daemon"
 	// ResourceQuotas, number
 	ResourceQuotas ResourceName = "resourcequotas"
 	// ResourceSecrets, number
