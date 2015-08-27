@@ -162,8 +162,8 @@ func (s *CMServer) Run(_ []string) error {
 		return err
 	}
 
-	kubeconfig.QPS = 20.0
-	kubeconfig.Burst = 30
+	kubeconfig.QPS = 100
+	kubeconfig.Burst = 200
 
 	kubeClient, err := client.New(kubeconfig)
 	if err != nil {
