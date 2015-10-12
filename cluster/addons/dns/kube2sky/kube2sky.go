@@ -92,6 +92,11 @@ func (ks *kube2sky) removeDNS(subdomain string) error {
 		Recursive: true,
 	}
 	_, err := ks.etcdClient.Delete(context.TODO(), skymsg.Path(subdomain), &opts)
+	// to make it behave the same as before
+	if kerr, ok := err.(etcd.Error); ok && kerr.Code == etcd.ErrorCodeKeyNotFound {
+		glog.V(2).Infof("Subdomain %q does not exist in etcd", subdomain)
+		return nil
+	}
 	return err
 }
 

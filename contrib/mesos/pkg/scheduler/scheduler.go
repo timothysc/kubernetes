@@ -273,7 +273,8 @@ func (k *KubernetesScheduler) storeFrameworkId() {
 	// TODO(jdef): port FrameworkId store to generic Kubernetes config store as soon as available
 	kAPI := etcd.NewKeysAPI(k.etcdClient)
 	opts := etcd.SetOptions{
-		TTL: time.Duration(k.failoverTimeout),
+		// failoverTimeout is in unit of seconds
+		TTL: time.Duration(k.failoverTimeout) * time.Second,
 	}
 	_, err := kAPI.Set(context.TODO(), meta.FrameworkIDKey, k.frameworkId.GetValue(), &opts)
 	if err != nil {

@@ -21,9 +21,9 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"runtime/debug"
 	"strings"
 	"time"
-	"runtime/debug"
 
 	etcd "github.com/coreos/etcd/client"
 	"k8s.io/kubernetes/pkg/api"
@@ -104,6 +104,7 @@ func (h *etcdHelper) Backends(ctx context.Context) []string {
 	mlist := make([]string, memberLength)
 	for idx, member := range members {
 		// under what conditions would the client urls be > 1?
+		// etcd supports to listen on multiple client urls at the same time
 		mlist[idx] = member.ClientURLs[0]
 	}
 
@@ -123,7 +124,7 @@ func (h *etcdHelper) Create(ctx context.Context, key string, obj, out runtime.Ob
 		return err
 	}
 	fmt.Printf("CREATE_KEY=%v\n", key)
-	
+
 	if strings.Contains(key, "test-service-account-creation") {
 		debug.PrintStack()
 	}
@@ -136,7 +137,7 @@ func (h *etcdHelper) Create(ctx context.Context, key string, obj, out runtime.Ob
 
 	startTime := time.Now()
 	opts := etcd.SetOptions{
-		TTL:       time.Duration(ttl)*time.Second,
+		TTL:       time.Duration(ttl) * time.Second,
 		PrevExist: etcd.PrevNoExist,
 	}
 
@@ -163,15 +164,17 @@ func (h *etcdHelper) Set(ctx context.Context, key string, obj, out runtime.Objec
 	}
 	key = h.prefixEtcdKey(key)
 
-	fmt.Printf("SET_KEY=%v\n",key)
+	fmt.Printf("SET_KEY=%v\n", key)
 	create := true
 	if h.versioner != nil {
 		if version, err := h.versioner.ObjectResourceVersion(obj); err == nil && version != 0 {
 			create = false
 			startTime := time.Now()
 			opts := etcd.SetOptions{
-				TTL:       time.Duration(ttl)*time.Second,
+				TTL:       time.Duration(ttl) * time.Second,
 				PrevIndex: version,
+				// compareAndSwap == set + PrevExist
+				PrevExist: etcd.PrevExist,
 			}
 			response, err = h.client.Set(ctx, key, string(data), &opts)
 			metrics.RecordEtcdRequestLatency("compareAndSwap", getTypeName(obj), startTime)
@@ -185,7 +188,7 @@ func (h *etcdHelper) Set(ctx context.Context, key string, obj, out runtime.Objec
 		// Create will fail if a key already exists.
 		startTime := time.Now()
 		opts := etcd.SetOptions{
-			TTL:       time.Duration(ttl)*time.Second,
+			TTL:       time.Duration(ttl) * time.Second,
 			PrevExist: etcd.PrevNoExist,
 		}
 
@@ -220,7 +223,7 @@ func (h *etcdHelper) Delete(ctx context.Context, key string, out runtime.Object)
 	startTime := time.Now()
 	response, err := h.client.Delete(ctx, key, nil)
 	metrics.RecordEtcdRequestLatency("delete", getTypeName(out), startTime)
-	if err!=nil && !IsEtcdNotFound(err) {
+	if err != nil && !IsEtcdNotFound(err) {
 		// if the object that existed prior to the delete is returned by etcd, update out.
 		if err != nil || response.PrevNode != nil {
 			_, _, err = h.extractObj(response, err, out, false, true)
@@ -433,7 +436,7 @@ func (h *etcdHelper) GuaranteedUpdate(ctx context.Context, key string, ptrToType
 		panic("need ptr to type")
 	}
 	key = h.prefixEtcdKey(key)
-	fmt.Printf("\n\nGuaranteedUpdate KEY=%v\n",key)
+	fmt.Printf("\n\nGuaranteedUpdate KEY=%v\n", key)
 	for {
 		obj := reflect.New(v.Type()).Interface().(runtime.Object)
 		origBody, node, res, err := h.bodyAndExtractObj(ctx, key, obj, ignoreNotFound)
@@ -486,7 +489,7 @@ func (h *etcdHelper) GuaranteedUpdate(ctx context.Context, key string, ptrToType
 		if index == 0 {
 			startTime := time.Now()
 			opts := etcd.SetOptions{
-				TTL:       time.Duration(ttl)*time.Second,
+				TTL:       time.Duration(ttl) * time.Second,
 				PrevExist: etcd.PrevNoExist,
 			}
 
@@ -509,7 +512,9 @@ func (h *etcdHelper) GuaranteedUpdate(ctx context.Context, key string, ptrToType
 		opts := etcd.SetOptions{
 			PrevValue: origBody,
 			PrevIndex: index,
-			TTL:       time.Duration(ttl)*time.Second,
+			TTL:       time.Duration(ttl) * time.Second,
+			// it was compareAndSwap
+			PrevExist: etcd.PrevExist,
 		}
 		response, err := h.client.Set(ctx, key, string(data), &opts)
 		metrics.RecordEtcdRequestLatency("compareAndSwap", getTypeName(ptrToType), startTime)
@@ -517,7 +522,7 @@ func (h *etcdHelper) GuaranteedUpdate(ctx context.Context, key string, ptrToType
 			// Try again.
 			continue
 		}
-		fmt.Printf("Updating key=%v index=%v with data=%v error=%v ttl==%v \norignalbody=%v\nresponse=%v\n", key, index, string(data), err, ttl, origBody,response)	
+		fmt.Printf("Updating key=%v index=%v with data=%v error=%v ttl==%v \norignalbody=%v\nresponse=%v\n", key, index, string(data), err, ttl, origBody, response)
 		_, _, err = h.extractObj(response, err, ptrToType, false, false)
 		return err
 	}

@@ -92,9 +92,11 @@ func (e *etcdMasterElector) extendMaster(path, id string, ttl uint64, res *etcd.
 	// We don't handle the TTL delete w/o a write case here, it's handled in the next loop
 	// iteration.
 	opts := etcd.SetOptions{
-		TTL:       time.Duration(ttl)*time.Second,
+		TTL:       time.Duration(ttl) * time.Second,
 		PrevValue: "",
 		PrevIndex: res.Node.ModifiedIndex,
+		// it was compareAndSwap
+		PrevExist: etcd.PrevExist,
 	}
 	_, err := e.etcd.Set(context.TODO(), path, id, &opts)
 	if err != nil && !etcdstorage.IsEtcdTestFailed(err) {
@@ -112,7 +114,9 @@ func (e *etcdMasterElector) extendMaster(path, id string, ttl uint64, res *etcd.
 // returns "", err if an error occurred
 func (e *etcdMasterElector) becomeMaster(path, id string, ttl uint64) (string, error) {
 	opts := etcd.SetOptions{
-		TTL:       time.Duration(ttl)*time.Second,
+		TTL: time.Duration(ttl) * time.Second,
+		// it was create
+		PrevExist: etcd.PrevNoExist,
 	}
 
 	_, err := e.etcd.Set(context.TODO(), path, id, &opts)

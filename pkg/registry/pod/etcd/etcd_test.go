@@ -581,7 +581,7 @@ func TestEtcdUpdateNotScheduled(t *testing.T) {
 	key, _ := storage.KeyFunc(ctx, "foo")
 	key = etcdtest.AddPrefix(key)
 	opts := etcd.SetOptions{
-		TTL: time.Duration(1),
+		TTL: time.Duration(1) * time.Second,
 	}
 	fakeClient.Set(ctx, key, runtime.EncodeOrDie(testapi.Default.Codec(), validNewPod()), &opts)
 
@@ -609,7 +609,7 @@ func TestEtcdUpdateScheduled(t *testing.T) {
 	key, _ := storage.KeyFunc(ctx, "foo")
 	key = etcdtest.AddPrefix(key)
 	opts := etcd.SetOptions{
-		TTL: time.Duration(1),
+		TTL: time.Duration(1) * time.Second,
 	}
 	fakeClient.Set(ctx, key, runtime.EncodeOrDie(testapi.Default.Codec(), &api.Pod{
 		ObjectMeta: api.ObjectMeta{
