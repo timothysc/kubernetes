@@ -17,6 +17,7 @@ api-servers
 api-server-port
 api-token
 api-version
+kubernetes-service-node-port
 authorization-mode
 authorization-policy-file
 auth-path
@@ -70,13 +71,12 @@ duration-sec
 e2e-verify-service-account
 e2e-output-dir
 enable-debugging-handlers
-enable-horizontal-pod-autoscaler
-enable-deployment-controller
 enable-server
 etcd-config
 etcd-prefix
 etcd-server
 etcd-servers
+etcd-servers-overrides
 event-burst
 event-qps
 event-ttl
@@ -128,6 +128,8 @@ ir-user
 jenkins-host
 jenkins-jobs
 km-path
+kube-api-burst
+kube-api-qps
 kubectl-path
 kubelet-cadvisor-port
 kubelet-certificate-authority
@@ -176,6 +178,7 @@ mesos-executor-mem
 mesos-master
 mesos-role
 mesos-user
+mesos-launch-grace-period
 minimum-container-ttl-duration
 minion-max-log-age
 minion-max-log-backups
@@ -183,6 +186,7 @@ minion-max-log-size
 minion-path-override
 min-pr-number
 min-request-timeout
+min-resync-period
 namespace-sync-period
 network-plugin
 network-plugin-dir
@@ -298,4 +302,7 @@ retry_time
 file_content_in_loop
 cpu-cfs-quota
 terminated-pod-gc-threshold
+reconcile-cidr
+register-schedulable
+repair-malformed-updates
 

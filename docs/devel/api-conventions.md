@@ -33,7 +33,7 @@ Documentation for other releases can be found at
 API Conventions
 ===============
 
-Updated: 9/20/2015
+Updated: 10/8/2015
 
 *This document is oriented at users who want a deeper understanding of the Kubernetes
 API structure, and developers wanting to extend the Kubernetes API.  An introduction to
@@ -73,6 +73,7 @@ using resources with kubectl can be found in [Working with resources](../user-gu
   - [Events](#events)
   - [Naming conventions](#naming-conventions)
   - [Label, selector, and annotation conventions](#label-selector-and-annotation-conventions)
+  - [WebSockets and SPDY](#websockets-and-spdy)
 
 <!-- END MUNGE: GENERATED_TOC -->
 
@@ -172,7 +173,7 @@ When a new version of an object is POSTed or PUT, the "spec" is updated and avai
 
 The Kubernetes API also serves as the foundation for the declarative configuration schema for the system. In order to facilitate level-based operation and expression of declarative configuration, fields in the specification should have declarative rather than imperative names and semantics -- they represent the desired state, not actions intended to yield the desired state.
 
-The PUT and POST verbs on objects will ignore the "status" values. A `/status` subresource is provided to enable system components to update statuses of resources they manage.
+The PUT and POST verbs on objects MUST ignore the "status" values, to avoid accidentally overwriting the status in read-modify-write scenarios. A `/status` subresource MUST be provided to enable system components to update statuses of resources they manage.
 
 Otherwise, PUT expects the whole object to be specified. Therefore, if a field is omitted it is assumed that the client wants to clear that field's value. The PUT verb does not accept partial updates. Modification of just part of an object may be achieved by GETting the resource, modifying part of the spec, labels, or annotations, and then PUTting it back. See [concurrency control](#concurrency-control-and-consistency), below, regarding read-modify-write consistency when using this pattern. Some objects may expose alternative resource representations that allow mutation of the status, or performing custom actions on the object.
 
@@ -287,7 +288,7 @@ The API supports three different PATCH operations, determined by their correspon
 
 * JSON Patch, `Content-Type: application/json-patch+json`
  * As defined in [RFC6902](https://tools.ietf.org/html/rfc6902), a JSON Patch is a sequence of operations that are executed on the resource, e.g. `{"op": "add", "path": "/a/b/c", "value": [ "foo", "bar" ]}`. For more details on how to use JSON Patch, see the RFC.
-* Merge Patch, `Content-Type: application/merge-json-patch+json`
+* Merge Patch, `Content-Type: application/merge-patch+json`
  * As defined in [RFC7386](https://tools.ietf.org/html/rfc7386), a Merge Patch is essentially a partial representation of the resource. The submitted JSON is "merged" with the current resource to create a new one, then the new one is saved. For more details on how to use Merge Patch, see the RFC.
 * Strategic Merge Patch, `Content-Type: application/strategic-merge-patch+json`
  * Strategic Merge Patch is a custom implementation of Merge Patch. For a detailed explanation of how it works and why it needed to be introduced, see below.
@@ -720,6 +721,22 @@ Other advice regarding use of labels, annotations, and other generic map keys by
     - For instance, prefer `service-account.kubernetes.io/name` over `kubernetes.io/service-account.name`
   - Use annotations to store API extensions that the controller responsible for the resource doesn't need to know about, experimental fields that aren't intended to be generally used API fields, etc. Beware that annotations aren't automatically handled by the API conversion machinery.
 
+
+## WebSockets and SPDY
+
+Some of the API operations exposed by Kubernetes involve transfer of binary streams between the client and a container, including attach, exec, portforward, and logging. The API therefore exposes certain operations over upgradeable HTTP connections ([described in RFC 2817](https://tools.ietf.org/html/rfc2817)) via the WebSocket and SPDY protocols. These actions are exposed as subresources with their associated verbs (exec, log, attach, and portforward) and are requested via a GET (to support JavaScript in a browser) and POST (semantically accurate).
+
+There are two primary protocols in use today:
+
+1.  Streamed channels
+
+    When dealing with multiple independent binary streams of data such as the remote execution of a shell command (writing to STDIN, reading from STDOUT and STDERR) or forwarding multiple ports the streams can be multiplexed onto a single TCP connection. Kubernetes supports a SPDY based framing protocol that leverages SPDY channels and a WebSocket framing protocol that multiplexes multiple channels onto the same stream by prefixing each binary chunk with a byte indicating its channel. The WebSocket protocol supports an optional subprotocol that handles base64-encoded bytes from the client and returns base64-encoded bytes from the server and character based channel prefixes ('0', '1', '2') for ease of use from JavaScript in a browser.
+
+2.  Streaming response
+
+    The default log output for a channel of streaming data is an HTTP Chunked Transfer-Encoding, which can return an arbitrary stream of binary data from the server. Browser-based JavaScript is limited in its ability to access the raw data from a chunked response, especially when very large amounts of logs are returned, and in future API calls it may be desirable to transfer large files. The streaming API endpoints support an optional WebSocket upgrade that provides a unidirectional channel from the server to the client and chunks data as binary WebSocket frames. An optional WebSocket subprotocol is exposed that base64 encodes the stream before returning it to the client.
+
+Clients should use the SPDY protocols if their clients have native support, or WebSockets as a fallback. Note that WebSockets is susceptible to Head-of-Line blocking and so clients must read and process each message sequentionally. In the future, an HTTP/2 implementation will be exposed that deprecates SPDY.
 
 
 <!-- BEGIN MUNGE: GENERATED_ANALYTICS -->

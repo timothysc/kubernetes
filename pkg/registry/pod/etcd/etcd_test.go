@@ -40,7 +40,7 @@ import (
 
 func newStorage(t *testing.T) (*REST, *BindingREST, *StatusREST, *tools.FakeEtcdClient) {
 	etcdStorage, fakeClient := registrytest.NewEtcdStorage(t, "")
-	storage := NewStorage(etcdStorage, false, nil)
+	storage := NewStorage(etcdStorage, false, nil, nil)
 	return storage.Pod, storage.Binding, storage.Status, fakeClient
 }
 
@@ -66,6 +66,7 @@ func validNewPod() *api.Pod {
 					SecurityContext:        securitycontext.ValidSecurityContextWithContainerDefaults(),
 				},
 			},
+			SecurityContext: &api.PodSecurityContext{},
 		},
 	}
 }
@@ -625,6 +626,7 @@ func TestEtcdUpdateScheduled(t *testing.T) {
 					SecurityContext: securitycontext.ValidSecurityContextWithContainerDefaults(),
 				},
 			},
+			SecurityContext: &api.PodSecurityContext{},
 		},
 	}), &opts)
 
@@ -639,19 +641,18 @@ func TestEtcdUpdateScheduled(t *testing.T) {
 		},
 		Spec: api.PodSpec{
 			NodeName: "machine",
-			Containers: []api.Container{
-				{
-					Name:                   "foobar",
-					Image:                  "foo:v2",
-					ImagePullPolicy:        api.PullIfNotPresent,
-					TerminationMessagePath: api.TerminationMessagePathDefault,
-					SecurityContext:        securitycontext.ValidSecurityContextWithContainerDefaults(),
-				},
-			},
+			Containers: []api.Container{{
+				Name:                   "foobar",
+				Image:                  "foo:v2",
+				ImagePullPolicy:        api.PullIfNotPresent,
+				TerminationMessagePath: api.TerminationMessagePathDefault,
+				SecurityContext:        securitycontext.ValidSecurityContextWithContainerDefaults(),
+			}},
 			RestartPolicy: api.RestartPolicyAlways,
 			DNSPolicy:     api.DNSClusterFirst,
 
 			TerminationGracePeriodSeconds: &grace,
+			SecurityContext:               &api.PodSecurityContext{},
 		},
 	}
 	_, _, err := storage.Update(ctx, &podIn)
@@ -690,6 +691,7 @@ func TestEtcdUpdateStatus(t *testing.T) {
 					SecurityContext: securitycontext.ValidSecurityContextWithContainerDefaults(),
 				},
 			},
+			SecurityContext: &api.PodSecurityContext{},
 		},
 	}
 	fakeClient.Set(ctx, key, runtime.EncodeOrDie(testapi.Default.Codec(), &podStart), nil)
@@ -711,6 +713,7 @@ func TestEtcdUpdateStatus(t *testing.T) {
 					TerminationMessagePath: api.TerminationMessagePathDefault,
 				},
 			},
+			SecurityContext: &api.PodSecurityContext{},
 		},
 		Status: api.PodStatus{
 			Phase:   api.PodRunning,
@@ -745,7 +748,7 @@ func TestEtcdUpdateStatus(t *testing.T) {
 
 func TestPodLogValidates(t *testing.T) {
 	etcdStorage, _ := registrytest.NewEtcdStorage(t, "")
-	storage := NewStorage(etcdStorage, false, nil)
+	storage := NewStorage(etcdStorage, false, nil, nil)
 
 	negativeOne := int64(-1)
 	testCases := []*api.PodLogOptions{

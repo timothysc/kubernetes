@@ -32,12 +32,14 @@ export PATH=${GOPATH}/bin:${HOME}/third_party/etcd:/usr/local/go/bin:$PATH
 
 # Install a few things needed by unit and /integration tests.
 go get -u github.com/jstemmer/go-junit-report
-./hack/travis/install-etcd.sh
+./hack/install-etcd.sh
 
 # Enable the Go race detector.
 export KUBE_RACE=-race
 # Produce a JUnit-style XML test report for Jenkins.
 export KUBE_JUNIT_REPORT_DIR=${WORKSPACE}/_artifacts
+# Save the verbose stdout as well.
+export KUBE_KEEP_VERBOSE_TEST_OUTPUT=y
 
 ./hack/test-go.sh
 ./hack/test-integration.sh

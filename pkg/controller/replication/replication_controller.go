@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package replicationcontroller
+package replication
 
 import (
 	"reflect"
@@ -42,12 +42,6 @@ const (
 	// that have fulfilled their expectations at least this often. This recomputation
 	// happens based on contents in local pod storage.
 	FullControllerResyncPeriod = 30 * time.Second
-
-	// If a watch misdelivers info about a pod, it'll take at least this long
-	// to rectify the number of replicas. Note that dropped deletes are only
-	// rectified after the expectation times out because we don't know the
-	// final resting state of the pod.
-	PodRelistPeriod = 5 * time.Minute
 
 	// Realistic value of the burstReplica field for the replication manager based off
 	// performance requirements for kubernetes 1.0.
@@ -95,7 +89,7 @@ type ReplicationManager struct {
 }
 
 // NewReplicationManager creates a new ReplicationManager.
-func NewReplicationManager(kubeClient client.Interface, burstReplicas int) *ReplicationManager {
+func NewReplicationManager(kubeClient client.Interface, resyncPeriod controller.ResyncPeriodFunc, burstReplicas int) *ReplicationManager {
 	eventBroadcaster := record.NewBroadcaster()
 	eventBroadcaster.StartLogging(glog.Infof)
 	eventBroadcaster.StartRecordingToSink(kubeClient.Events(""))
@@ -114,13 +108,14 @@ func NewReplicationManager(kubeClient client.Interface, burstReplicas int) *Repl
 	rm.rcStore.Store, rm.rcController = framework.NewInformer(
 		&cache.ListWatch{
 			ListFunc: func() (runtime.Object, error) {
-				return rm.kubeClient.ReplicationControllers(api.NamespaceAll).List(labels.Everything())
+				return rm.kubeClient.ReplicationControllers(api.NamespaceAll).List(labels.Everything(), fields.Everything())
 			},
 			WatchFunc: func(rv string) (watch.Interface, error) {
 				return rm.kubeClient.ReplicationControllers(api.NamespaceAll).Watch(labels.Everything(), fields.Everything(), rv)
 			},
 		},
 		&api.ReplicationController{},
+		// TODO: Can we have much longer period here?
 		FullControllerResyncPeriod,
 		framework.ResourceEventHandlerFuncs{
 			AddFunc: rm.enqueueController,
@@ -161,7 +156,7 @@ func NewReplicationManager(kubeClient client.Interface, burstReplicas int) *Repl
 			},
 		},
 		&api.Pod{},
-		PodRelistPeriod,
+		resyncPeriod(),
 		framework.ResourceEventHandlerFuncs{
 			AddFunc: rm.addPod,
 			// This invokes the rc for every pod change, eg: host assignment. Though this might seem like overkill
@@ -211,7 +206,13 @@ func (rm *ReplicationManager) getPodController(pod *api.Pod) *api.ReplicationCon
 	// rc1 (older rc): [(k1=v1)], replicas=1 rc2: [(k2=v2)], replicas=2
 	// pod: [(k1:v1), (k2:v2)] will wake both rc1 and rc2, and we will sync rc1.
 	// pod: [(k2:v2)] will wake rc2 which creates a new replica.
-	sort.Sort(overlappingControllers(controllers))
+	if len(controllers) > 1 {
+		// More than two items in this list indicates user error. If two replication-controller
+		// overlap, sort by creation timestamp, subsort by name, then pick
+		// the first.
+		glog.Errorf("user error! more than one replication controller is selecting pods with labels: %+v", pod.Labels)
+		sort.Sort(overlappingControllers(controllers))
+	}
 	return &controllers[0]
 }
 

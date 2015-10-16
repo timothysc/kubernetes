@@ -22,6 +22,7 @@ DOCKER_NATIVE=${DOCKER_NATIVE:-""}
 DOCKER=(docker ${DOCKER_OPTS})
 DOCKERIZE_KUBELET=${DOCKERIZE_KUBELET:-""}
 ALLOW_PRIVILEGED=${ALLOW_PRIVILEGED:-""}
+ALLOW_SECURITY_CONTEXT=${ALLOW_SECURITY_CONTEXT:-""}
 RUNTIME_CONFIG=${RUNTIME_CONFIG:-""}
 KUBE_ROOT=$(dirname "${BASH_SOURCE}")/..
 cd "${KUBE_ROOT}"
@@ -89,6 +90,7 @@ CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-"docker"}
 RKT_PATH=${RKT_PATH:-""}
 RKT_STAGE1_IMAGE=${RKT_STAGE1_IMAGE:-""}
 CHAOS_CHANCE=${CHAOS_CHANCE:-0.0}
+CPU_CFS_QUOTA=${CPU_CFS_QUOTA:-false}
 
 function test_apiserver_off {
     # For the common local scenario, fail fast if server is already running.
@@ -201,8 +203,11 @@ function set_service_accounts {
 
 function start_apiserver {
     # Admission Controllers to invoke prior to persisting objects in cluster
-    ADMISSION_CONTROL=NamespaceLifecycle,NamespaceAutoProvision,LimitRanger,SecurityContextDeny,ServiceAccount,DenyEscalatingExec,ResourceQuota
-
+    if [[ -z "${ALLOW_SECURITY_CONTEXT}" ]]; then
+      ADMISSION_CONTROL=NamespaceLifecycle,NamespaceAutoProvision,LimitRanger,SecurityContextDeny,ServiceAccount,ResourceQuota
+    else
+      ADMISSION_CONTROL=NamespaceLifecycle,NamespaceAutoProvision,LimitRanger,ServiceAccount,ResourceQuota
+    fi
     # This is the default dir and filename where the apiserver will generate a self-signed cert
     # which should be able to be used as the CA to verify itself
     CERT_DIR=/var/run/kubernetes
@@ -258,6 +263,7 @@ function start_kubelet {
         --hostname-override="127.0.0.1" \
         --address="127.0.0.1" \
         --api-servers="${API_HOST}:${API_PORT}" \
+        --cpu-cfs-quota=${CPU_CFS_QUOTA} \
         --port="$KUBELET_PORT" >"${KUBELET_LOG}" 2>&1 &
       KUBELET_PID=$!
     else

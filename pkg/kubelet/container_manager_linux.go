@@ -38,6 +38,7 @@ import (
 	"k8s.io/kubernetes/pkg/util/mount"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/util/sets"
+	utilsysctl "k8s.io/kubernetes/pkg/util/sysctl"
 )
 
 const (
@@ -141,10 +142,60 @@ func createManager(containerName string) *fs.Manager {
 	}
 }
 
+// TODO: plumb this up as a flag to Kubelet in a future PR
+type KernelTunableBehavior string
+
+const (
+	KernelTunableWarn   KernelTunableBehavior = "warn"
+	KernelTunableError  KernelTunableBehavior = "error"
+	KernelTunableModify KernelTunableBehavior = "modify"
+)
+
+// setupKernelTunables validates kernel tunable flags are set as expected
+// depending upon the specified option, it will either warn, error, or modify the kernel tunable flags
+func setupKernelTunables(option KernelTunableBehavior) error {
+	desiredState := map[string]int{
+		utilsysctl.VmOvercommitMemory: utilsysctl.VmOvercommitMemoryAlways,
+		utilsysctl.VmPanicOnOOM:       utilsysctl.VmPanicOnOOMInvokeOOMKiller,
+	}
+
+	errList := []error{}
+	for flag, expectedValue := range desiredState {
+		val, err := utilsysctl.GetSysctl(flag)
+		if err != nil {
+			errList = append(errList, err)
+			continue
+		}
+		if val == expectedValue {
+			continue
+		}
+
+		switch option {
+		case KernelTunableError:
+			errList = append(errList, fmt.Errorf("Invalid kernel flag: %v, expected value: %v, actual value: %v", flag, expectedValue, val))
+		case KernelTunableWarn:
+			glog.V(2).Infof("Invalid kernel flag: %v, expected value: %v, actual value: %v", flag, expectedValue, val)
+		case KernelTunableModify:
+			glog.V(2).Infof("Updating kernel flag: %v, expected value: %v, actual value: %v", flag, expectedValue, val)
+			err = utilsysctl.SetSysctl(flag, expectedValue)
+			if err != nil {
+				errList = append(errList, err)
+			}
+		}
+	}
+	return errors.NewAggregate(errList)
+}
+
 func (cm *containerManagerImpl) setupNode() error {
 	if err := validateSystemRequirements(cm.mountUtil); err != nil {
 		return err
 	}
+
+	// TODO: plumb kernel tunable options into container manager, right now, we modify by default
+	if err := setupKernelTunables(KernelTunableModify); err != nil {
+		return err
+	}
+
 	systemContainers := []*systemContainer{}
 	if cm.dockerDaemonContainerName != "" {
 		cont := newSystemContainer(cm.dockerDaemonContainerName)

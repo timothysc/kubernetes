@@ -22,6 +22,8 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,9 +51,12 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/net/websocket"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+
+	gomegatypes "github.com/onsi/gomega/types"
 )
 
 const (
@@ -66,7 +71,7 @@ const (
 	nonExist = "NonExist"
 
 	// How often to poll pods and nodes.
-	poll = 5 * time.Second
+	poll = 2 * time.Second
 
 	// service accounts are provisioned after namespace creation
 	// a service account is required to support pod creation in a namespace as part of admission control
@@ -86,10 +91,6 @@ const (
 	podRespondingTimeout     = 2 * time.Minute
 	serviceRespondingTimeout = 2 * time.Minute
 	endpointRegisterTimeout  = time.Minute
-
-	// How wide to print pod names, by default. Useful for aligning printing to
-	// quickly scan through output.
-	podPrintWidth = 55
 )
 
 type CloudConfig struct {
@@ -242,6 +243,9 @@ func providerIs(providers ...string) bool {
 	return false
 }
 
+// providersWithSSH are those providers where each node is accessible with SSH
+var providersWithSSH = []string{"gce", "gke", "aws"}
+
 type podCondition func(pod *api.Pod) (bool, error)
 
 // podReady returns whether pod has a condition of Ready with a status of true.
@@ -332,11 +336,11 @@ func waitForPodsRunningReady(ns string, minPods int, timeout time.Duration) erro
 	start := time.Now()
 	Logf("Waiting up to %v for all pods (need at least %d) in namespace '%s' to be running and ready",
 		timeout, minPods, ns)
-	if wait.Poll(poll, timeout, func() (bool, error) {
+	if wait.PollImmediate(poll, timeout, func() (bool, error) {
 		// We get the new list of pods and replication controllers in every
 		// iteration because more pods come online during startup and we want to
 		// ensure they are also checked.
-		rcList, err := c.ReplicationControllers(ns).List(labels.Everything())
+		rcList, err := c.ReplicationControllers(ns).List(labels.Everything(), fields.Everything())
 		if err != nil {
 			Logf("Error getting replication controllers in namespace '%s': %v", ns, err)
 			return false, nil
@@ -408,22 +412,22 @@ func waitForServiceAccountInNamespace(c *client.Client, ns, serviceAccountName s
 }
 
 func waitForPodCondition(c *client.Client, ns, podName, desc string, timeout time.Duration, condition podCondition) error {
-	Logf("Waiting up to %[1]v for pod %-[2]*[3]s status to be %[4]s", timeout, podPrintWidth, podName, desc)
+	Logf("Waiting up to %[1]v for pod %[2]s status to be %[3]s", timeout, podName, desc)
 	for start := time.Now(); time.Since(start) < timeout; time.Sleep(poll) {
 		pod, err := c.Pods(ns).Get(podName)
 		if err != nil {
 			// Aligning this text makes it much more readable
-			Logf("Get pod %-[1]*[2]s in namespace '%[3]s' failed, ignoring for %[4]v. Error: %[5]v",
-				podPrintWidth, podName, ns, poll, err)
+			Logf("Get pod %[1]s in namespace '%[2]s' failed, ignoring for %[3]v. Error: %[4]v",
+				podName, ns, poll, err)
 			continue
 		}
 		done, err := condition(pod)
 		if done {
 			return err
 		}
-		Logf("Waiting for pod %-[1]*[2]s in namespace '%[3]s' status to be '%[4]s'"+
-			"(found phase: %[5]q, readiness: %[6]t) (%[7]v elapsed)",
-			podPrintWidth, podName, ns, desc, pod.Status.Phase, podReady(pod), time.Since(start))
+		Logf("Waiting for pod %[1]s in namespace '%[2]s' status to be '%[3]s'"+
+			"(found phase: %[4]q, readiness: %[5]t) (%[6]v elapsed)",
+			podName, ns, desc, pod.Status.Phase, podReady(pod), time.Since(start))
 	}
 	return fmt.Errorf("gave up waiting for pod '%s' to be '%s' after %v", podName, desc, timeout)
 }
@@ -467,7 +471,7 @@ func createTestingNS(baseName string, c *client.Client) (*api.Namespace, error) 
 	}
 	// Be robust about making the namespace creation call.
 	var got *api.Namespace
-	if err := wait.Poll(poll, singleCallTimeout, func() (bool, error) {
+	if err := wait.PollImmediate(poll, singleCallTimeout, func() (bool, error) {
 		var err error
 		got, err = c.Namespaces().Create(namespaceObj)
 		if err != nil {
@@ -532,7 +536,7 @@ func deleteNS(c *client.Client, namespace string, timeout time.Duration) error {
 		return err
 	}
 
-	err := wait.Poll(5*time.Second, timeout, func() (bool, error) {
+	err := wait.PollImmediate(5*time.Second, timeout, func() (bool, error) {
 		if _, err := c.Namespaces().Get(namespace); err != nil {
 			if apierrs.IsNotFound(err) {
 				return true, nil
@@ -620,7 +624,7 @@ func waitForPodSuccessInNamespace(c *client.Client, podName string, contName str
 func waitForRCPodOnNode(c *client.Client, ns, rcName, node string) (*api.Pod, error) {
 	label := labels.SelectorFromSet(labels.Set(map[string]string{"name": rcName}))
 	var p *api.Pod = nil
-	err := wait.Poll(10*time.Second, 5*time.Minute, func() (bool, error) {
+	err := wait.PollImmediate(10*time.Second, 5*time.Minute, func() (bool, error) {
 		Logf("Waiting for pod %s to appear on node %s", rcName, node)
 		pods, err := c.Pods(ns).List(label, fields.Everything())
 		if err != nil {
@@ -639,7 +643,7 @@ func waitForRCPodOnNode(c *client.Client, ns, rcName, node string) (*api.Pod, er
 }
 
 func waitForPodToDisappear(c *client.Client, ns, podName string, label labels.Selector, interval, timeout time.Duration) error {
-	return wait.Poll(interval, timeout, func() (bool, error) {
+	return wait.PollImmediate(interval, timeout, func() (bool, error) {
 		Logf("Waiting for pod %s to disappear", podName)
 		pods, err := c.Pods(ns).List(label, fields.Everything())
 		if err != nil {
@@ -669,7 +673,7 @@ func waitForRCPodToDisappear(c *client.Client, ns, rcName, podName string) error
 
 // waitForService waits until the service appears (exist == true), or disappears (exist == false)
 func waitForService(c *client.Client, namespace, name string, exist bool, interval, timeout time.Duration) error {
-	err := wait.Poll(interval, timeout, func() (bool, error) {
+	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
 		_, err := c.Services(namespace).Get(name)
 		switch {
 		case err == nil:
@@ -724,7 +728,7 @@ func countEndpointsNum(e *api.Endpoints) int {
 
 // waitForReplicationController waits until the RC appears (exist == true), or disappears (exist == false)
 func waitForReplicationController(c *client.Client, namespace, name string, exist bool, interval, timeout time.Duration) error {
-	err := wait.Poll(interval, timeout, func() (bool, error) {
+	err := wait.PollImmediate(interval, timeout, func() (bool, error) {
 		_, err := c.ReplicationControllers(namespace).Get(name)
 		if err != nil {
 			Logf("Get ReplicationController %s in namespace %s failed (%v).", name, namespace, err)
@@ -819,13 +823,13 @@ func (r podResponseChecker) checkAllResponses() (done bool, err error) {
 func podsResponding(c *client.Client, ns, name string, wantName bool, pods *api.PodList) error {
 	By("trying to dial each unique pod")
 	label := labels.SelectorFromSet(labels.Set(map[string]string{"name": name}))
-	return wait.Poll(poll, podRespondingTimeout, podResponseChecker{c, ns, label, name, wantName, pods}.checkAllResponses)
+	return wait.PollImmediate(poll, podRespondingTimeout, podResponseChecker{c, ns, label, name, wantName, pods}.checkAllResponses)
 }
 
 func serviceResponding(c *client.Client, ns, name string) error {
 	By(fmt.Sprintf("trying to dial the service %s.%s via the proxy", ns, name))
 
-	return wait.Poll(poll, serviceRespondingTimeout, func() (done bool, err error) {
+	return wait.PollImmediate(poll, serviceRespondingTimeout, func() (done bool, err error) {
 		body, err := c.Get().
 			Prefix("proxy").
 			Namespace(ns).
@@ -1078,10 +1082,29 @@ func tryKill(cmd *exec.Cmd) {
 	}
 }
 
-// testContainerOutputInNamespace runs the given pod in the given namespace and waits
-// for all of the containers in the podSpec to move into the 'Success' status.  It retrieves
-// the exact container log and searches for lines of expected output.
-func testContainerOutputInNamespace(scenarioName string, c *client.Client, pod *api.Pod, containerIndex int, expectedOutput []string, ns string) {
+// testContainerOutput runs the given pod in the given namespace and waits
+// for all of the containers in the podSpec to move into the 'Success' status, and tests
+// the specified container log against the given expected output using a substring matcher.
+func testContainerOutput(scenarioName string, c *client.Client, pod *api.Pod, containerIndex int, expectedOutput []string, ns string) {
+	testContainerOutputMatcher(scenarioName, c, pod, containerIndex, expectedOutput, ns, ContainSubstring)
+}
+
+// testContainerOutputRegexp runs the given pod in the given namespace and waits
+// for all of the containers in the podSpec to move into the 'Success' status, and tests
+// the specified container log against the given expected output using a regexp matcher.
+func testContainerOutputRegexp(scenarioName string, c *client.Client, pod *api.Pod, containerIndex int, expectedOutput []string, ns string) {
+	testContainerOutputMatcher(scenarioName, c, pod, containerIndex, expectedOutput, ns, MatchRegexp)
+}
+
+// testContainerOutputMatcher runs the given pod in the given namespace and waits
+// for all of the containers in the podSpec to move into the 'Success' status, and tests
+// the specified container log against the given expected output using the given matcher.
+func testContainerOutputMatcher(scenarioName string,
+	c *client.Client,
+	pod *api.Pod,
+	containerIndex int,
+	expectedOutput []string, ns string,
+	matcher func(string, ...interface{}) gomegatypes.GomegaMatcher) {
 	By(fmt.Sprintf("Creating a pod to test %v", scenarioName))
 
 	defer c.Pods(ns).Delete(pod.Name, api.NewDeleteOptions(0))
@@ -1137,7 +1160,7 @@ func testContainerOutputInNamespace(scenarioName string, c *client.Client, pod *
 	}
 
 	for _, m := range expectedOutput {
-		Expect(string(logs)).To(ContainSubstring(m), "%q in container output", m)
+		Expect(string(logs)).To(matcher(m), "%q in container output", m)
 	}
 }
 
@@ -1211,7 +1234,6 @@ func Diff(oldPods []*api.Pod, curPods []*api.Pod) PodDiff {
 // It's the caller's responsibility to clean up externally (i.e. use the
 // namespace lifecycle for handling cleanup).
 func RunRC(config RCConfig) error {
-
 	// Don't force tests to fail if they don't care about containers restarting.
 	var maxContainerFailures int
 	if config.MaxContainerFailures == nil {
@@ -1222,7 +1244,7 @@ func RunRC(config RCConfig) error {
 
 	label := labels.SelectorFromSet(labels.Set(map[string]string{"name": config.Name}))
 
-	By(fmt.Sprintf("%v Creating replication controller %s", time.Now(), config.Name))
+	By(fmt.Sprintf("creating replication controller %s in namespace %s", config.Name, config.Namespace))
 	rc := &api.ReplicationController{
 		ObjectMeta: api.ObjectMeta{
 			Name: config.Name,
@@ -1289,7 +1311,7 @@ func RunRC(config RCConfig) error {
 	if err != nil {
 		return fmt.Errorf("Error creating replication controller: %v", err)
 	}
-	Logf("%v Created replication controller with name: %v, namespace: %v, replica count: %v", time.Now(), rc.Name, config.Namespace, rc.Spec.Replicas)
+	Logf("Created replication controller with name: %v, namespace: %v, replica count: %v", rc.Name, config.Namespace, rc.Spec.Replicas)
 	podStore := newPodStore(config.Client, config.Namespace, label, fields.Everything())
 	defer podStore.Stop()
 
@@ -1361,13 +1383,13 @@ func RunRC(config RCConfig) error {
 			*config.CreatedPods = pods
 		}
 
-		Logf("%v %v Pods: %d out of %d created, %d running, %d pending, %d waiting, %d inactive, %d terminating, %d unknown, %d runningButNotReady ",
-			time.Now(), rc.Name, len(pods), config.Replicas, running, pending, waiting, inactive, terminating, unknown, runningButNotReady)
+		Logf("%v Pods: %d out of %d created, %d running, %d pending, %d waiting, %d inactive, %d terminating, %d unknown, %d runningButNotReady ",
+			rc.Name, len(pods), config.Replicas, running, pending, waiting, inactive, terminating, unknown, runningButNotReady)
 
 		promPushRunningPending(running, pending)
 
 		if config.PodStatusFile != nil {
-			fmt.Fprintf(config.PodStatusFile, "%s, %d, running, %d, pending, %d, waiting, %d, inactive, %d, unknown, %d, runningButNotReady\n", time.Now(), running, pending, waiting, inactive, unknown, runningButNotReady)
+			fmt.Fprintf(config.PodStatusFile, "%d, running, %d, pending, %d, waiting, %d, inactive, %d, unknown, %d, runningButNotReady\n", running, pending, waiting, inactive, unknown, runningButNotReady)
 		}
 
 		if failedContainers > maxContainerFailures {
@@ -1399,9 +1421,11 @@ func RunRC(config RCConfig) error {
 	}
 
 	if oldRunning != config.Replicas {
-		if pods, err := config.Client.Pods(api.NamespaceAll).List(labels.Everything(), fields.Everything()); err == nil {
+		// List only pods from a given replication controller.
+		if pods, err := config.Client.Pods(api.NamespaceAll).List(label, fields.Everything()); err == nil {
+
 			for _, pod := range pods.Items {
-				Logf("Pod %s\t%s\t%s\t%s", pod.Namespace, pod.Name, pod.Spec.NodeName, pod.DeletionTimestamp)
+				Logf("Pod %s\t%s\t%s\t%s", pod.Name, pod.Spec.NodeName, pod.Status.Phase, pod.DeletionTimestamp)
 			}
 		} else {
 			Logf("Can't list pod debug info: %v", err)
@@ -1479,7 +1503,7 @@ func getNodeEvents(c *client.Client, nodeName string) []api.Event {
 }
 
 func ScaleRC(c *client.Client, ns, name string, size uint, wait bool) error {
-	By(fmt.Sprintf("%v Scaling replication controller %s in namespace %s to %d", time.Now(), name, ns, size))
+	By(fmt.Sprintf("Scaling replication controller %s in namespace %s to %d", name, ns, size))
 	scaler, err := kubectl.ScalerFor("ReplicationController", c)
 	if err != nil {
 		return err
@@ -1535,7 +1559,7 @@ func waitForPodsWithLabel(c *client.Client, ns string, label labels.Selector) (p
 
 // Delete a Replication Controller and all pods it spawned
 func DeleteRC(c *client.Client, ns, name string) error {
-	By(fmt.Sprintf("%v Deleting replication controller %s in namespace %s", time.Now(), name, ns))
+	By(fmt.Sprintf("deleting replication controller %s in namespace %s", name, ns))
 	rc, err := c.ReplicationControllers(ns).Get(name)
 	if err != nil {
 		if apierrs.IsNotFound(err) {
@@ -1571,7 +1595,7 @@ func DeleteRC(c *client.Client, ns, name string) error {
 // waitForRCPodsGone waits until there are no pods reported under an RC's selector (because the pods
 // have completed termination).
 func waitForRCPodsGone(c *client.Client, rc *api.ReplicationController) error {
-	return wait.Poll(poll, 2*time.Minute, func() (bool, error) {
+	return wait.PollImmediate(poll, 2*time.Minute, func() (bool, error) {
 		if pods, err := c.Pods(rc.Namespace).List(labels.SelectorFromSet(rc.Spec.Selector), fields.Everything()); err == nil && len(pods.Items) == 0 {
 			return true, nil
 		}
@@ -1582,7 +1606,7 @@ func waitForRCPodsGone(c *client.Client, rc *api.ReplicationController) error {
 // Waits for the deployment to reach desired state.
 // Returns an error if minAvailable or maxCreated is broken at any times.
 func waitForDeploymentStatus(c *client.Client, ns, deploymentName string, desiredUpdatedReplicas, minAvailable, maxCreated int) error {
-	return wait.Poll(poll, 2*time.Minute, func() (bool, error) {
+	return wait.Poll(poll, 5*time.Minute, func() (bool, error) {
 
 		deployment, err := c.Deployments(ns).Get(deploymentName)
 		if err != nil {
@@ -1628,11 +1652,30 @@ func waitForDeploymentStatus(c *client.Client, ns, deploymentName string, desire
 	})
 }
 
+// Waits for the number of events on the given object to reach a desired count.
+func waitForEvents(c *client.Client, ns string, objOrRef runtime.Object, desiredEventsCount int) error {
+	return wait.Poll(poll, 5*time.Minute, func() (bool, error) {
+		events, err := c.Events(ns).Search(objOrRef)
+		if err != nil {
+			return false, fmt.Errorf("error in listing events: %s", err)
+		}
+		eventsCount := len(events.Items)
+		if eventsCount == desiredEventsCount {
+			return true, nil
+		}
+		if eventsCount < desiredEventsCount {
+			return false, nil
+		}
+		// Number of events has exceeded the desired count.
+		return false, fmt.Errorf("number of events has exceeded the desired count, eventsCount: %d, desiredCount: %d", eventsCount, desiredEventsCount)
+	})
+}
+
 // Convenient wrapper around listing nodes supporting retries.
 func listNodes(c *client.Client, label labels.Selector, field fields.Selector) (*api.NodeList, error) {
 	var nodes *api.NodeList
 	var errLast error
-	if wait.Poll(poll, singleCallTimeout, func() (bool, error) {
+	if wait.PollImmediate(poll, singleCallTimeout, func() (bool, error) {
 		nodes, errLast = c.Nodes().List(label, field)
 		return errLast == nil, nil
 	}) != nil {
@@ -1784,6 +1827,12 @@ func getSigner(provider string) (ssh.Signer, error) {
 	case "gce", "gke":
 		keyfile = "google_compute_engine"
 	case "aws":
+		// If there is an env. variable override, use that.
+		aws_keyfile := os.Getenv("AWS_SSH_KEY")
+		if len(aws_keyfile) != 0 {
+			return util.MakePrivateKeySignerFromFile(aws_keyfile)
+		}
+		// Otherwise revert to home dir
 		keyfile = "kube_aws_rsa"
 	default:
 		return nil, fmt.Errorf("getSigner(...) not implemented for %s", provider)
@@ -1812,7 +1861,7 @@ func checkPodsRunningReady(c *client.Client, ns string, podNames []string, timeo
 	// support only Go >= 1.4.
 	for _, podName := range podNames {
 		if !<-result {
-			Logf("Pod %-[1]*[2]s failed to be %[3]s.", podPrintWidth, podName, desc)
+			Logf("Pod %[1]s failed to be %[2]s.", podName, desc)
 			success = false
 		}
 	}
@@ -1874,7 +1923,7 @@ func allNodesReady(c *client.Client, timeout time.Duration) error {
 	Logf("Waiting up to %v for all nodes to be ready", timeout)
 
 	var notReady []api.Node
-	err := wait.Poll(poll, timeout, func() (bool, error) {
+	err := wait.PollImmediate(poll, timeout, func() (bool, error) {
 		notReady = nil
 		nodes, err := c.Nodes().List(labels.Everything(), fields.Everything())
 		if err != nil {
@@ -1993,4 +2042,82 @@ func waitForClusterSize(c *client.Client, size int, timeout time.Duration) error
 		Logf("Waiting for cluster size %d, current size %d, not ready nodes %d", size, numNodes, numNodes-numReady)
 	}
 	return fmt.Errorf("timeout waiting %v for cluster size to be %d", timeout, size)
+}
+
+// getHostExternalAddress gets the node for a pod and returns the first External
+// address. Returns an error if the node the pod is on doesn't have an External
+// address.
+func getHostExternalAddress(client *client.Client, p *api.Pod) (externalAddress string, err error) {
+	node, err := client.Nodes().Get(p.Spec.NodeName)
+	if err != nil {
+		return "", err
+	}
+	for _, address := range node.Status.Addresses {
+		if address.Type == api.NodeExternalIP {
+			if address.Address != "" {
+				externalAddress = address.Address
+				break
+			}
+		}
+	}
+	if externalAddress == "" {
+		err = fmt.Errorf("No external address for pod %v on node %v",
+			p.Name, p.Spec.NodeName)
+	}
+	return
+}
+
+type extractRT struct {
+	http.Header
+}
+
+func (rt *extractRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	rt.Header = req.Header
+	return nil, nil
+}
+
+// headersForConfig extracts any http client logic necessary for the provided
+// config.
+func headersForConfig(c *client.Config) (http.Header, error) {
+	extract := &extractRT{}
+	rt, err := client.HTTPWrappersForConfig(c, extract)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := rt.RoundTrip(&http.Request{}); err != nil {
+		return nil, err
+	}
+	return extract.Header, nil
+}
+
+// OpenWebSocketForURL constructs a websocket connection to the provided URL, using the client
+// config, with the specified protocols.
+func OpenWebSocketForURL(url *url.URL, config *client.Config, protocols []string) (*websocket.Conn, error) {
+	tlsConfig, err := client.TLSConfigFor(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create tls config: %v", err)
+	}
+	if tlsConfig != nil {
+		url.Scheme = "wss"
+		if !strings.Contains(url.Host, ":") {
+			url.Host += ":443"
+		}
+	} else {
+		url.Scheme = "ws"
+		if !strings.Contains(url.Host, ":") {
+			url.Host += ":80"
+		}
+	}
+	headers, err := headersForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load http headers: %v", err)
+	}
+	cfg, err := websocket.NewConfig(url.String(), "http://localhost")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create websocket config: %v", err)
+	}
+	cfg.Header = headers
+	cfg.TlsConfig = tlsConfig
+	cfg.Protocol = protocols
+	return websocket.DialConfig(cfg)
 }

@@ -48,8 +48,8 @@ import (
 	"k8s.io/kubernetes/pkg/api/errors"
 	client "k8s.io/kubernetes/pkg/client/unversioned"
 	"k8s.io/kubernetes/pkg/fields"
-	"k8s.io/kubernetes/pkg/kubelet"
 	"k8s.io/kubernetes/pkg/kubelet/container"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/labels"
 	"k8s.io/kubernetes/pkg/util/sets"
 )
@@ -902,7 +902,7 @@ func (ks *KubernetesScheduler) recoverTasks() error {
 		ks.slaveHostNames.Register(slaveId, t.Offer.Host())
 	}
 	for _, pod := range podList.Items {
-		if _, isMirrorPod := pod.Annotations[kubelet.ConfigMirrorAnnotationKey]; isMirrorPod {
+		if _, isMirrorPod := pod.Annotations[kubetypes.ConfigMirrorAnnotationKey]; isMirrorPod {
 			// mirrored pods are never reconciled because the scheduler isn't responsible for
 			// scheduling them; they're started by the executor/kubelet upon instantiation and
 			// reflected in the apiserver afterward. the scheduler has no knowledge of them.

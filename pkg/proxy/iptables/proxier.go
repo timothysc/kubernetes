@@ -25,9 +25,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"fmt"
-	"io/ioutil"
 	"net"
-	"path"
 	"reflect"
 	"strconv"
 	"strings"
@@ -43,6 +41,7 @@ import (
 	utilexec "k8s.io/kubernetes/pkg/util/exec"
 	utiliptables "k8s.io/kubernetes/pkg/util/iptables"
 	"k8s.io/kubernetes/pkg/util/slice"
+	utilsysctl "k8s.io/kubernetes/pkg/util/sysctl"
 )
 
 // iptablesMinVersion is the minimum version of iptables for which we will use the Proxier
@@ -66,7 +65,7 @@ const iptablesMasqueradeMark = "0x4d415351"
 // ShouldUseIptablesProxier returns true if we should use the iptables Proxier
 // instead of the "classic" userspace Proxier.  This is determined by checking
 // the iptables version and for the existence of kernel features. It may return
-// an error if it fails to get the itpables version without error, in which
+// an error if it fails to get the iptables version without error, in which
 // case it will also return false.
 func ShouldUseIptablesProxier() (bool, error) {
 	exec := utilexec.New()
@@ -90,7 +89,7 @@ func ShouldUseIptablesProxier() (bool, error) {
 	// Check for the required sysctls.  We don't care about the value, just
 	// that it exists.  If this Proxier is chosen, we'll iniialize it as we
 	// need.
-	_, err = getSysctl(sysctlRouteLocalnet)
+	_, err = utilsysctl.GetSysctl(sysctlRouteLocalnet)
 	if err != nil {
 		return false, err
 	}
@@ -98,25 +97,8 @@ func ShouldUseIptablesProxier() (bool, error) {
 	return true, nil
 }
 
-const sysctlBase = "/proc/sys"
 const sysctlRouteLocalnet = "net/ipv4/conf/all/route_localnet"
 const sysctlBridgeCallIptables = "net/bridge/bridge-nf-call-iptables"
-
-func getSysctl(sysctl string) (int, error) {
-	data, err := ioutil.ReadFile(path.Join(sysctlBase, sysctl))
-	if err != nil {
-		return -1, err
-	}
-	val, err := strconv.Atoi(strings.Trim(string(data), " \n"))
-	if err != nil {
-		return -1, err
-	}
-	return val, nil
-}
-
-func setSysctl(sysctl string, newVal int) error {
-	return ioutil.WriteFile(path.Join(sysctlBase, sysctl), []byte(strconv.Itoa(newVal)), 0640)
-}
 
 // internal struct for string service information
 type serviceInfo struct {
@@ -180,7 +162,7 @@ var _ proxy.ProxyProvider = &Proxier{}
 // will not terminate if a particular iptables call fails.
 func NewProxier(ipt utiliptables.Interface, exec utilexec.Interface, syncPeriod time.Duration, masqueradeAll bool) (*Proxier, error) {
 	// Set the route_localnet sysctl we need for
-	if err := setSysctl(sysctlRouteLocalnet, 1); err != nil {
+	if err := utilsysctl.SetSysctl(sysctlRouteLocalnet, 1); err != nil {
 		return nil, fmt.Errorf("can't set sysctl %s: %v", sysctlRouteLocalnet, err)
 	}
 
@@ -188,7 +170,7 @@ func NewProxier(ipt utiliptables.Interface, exec utilexec.Interface, syncPeriod 
 	// because we'll catch the error on the sysctl, which is what we actually
 	// care about.
 	exec.Command("modprobe", "br-netfilter").CombinedOutput()
-	if err := setSysctl(sysctlBridgeCallIptables, 1); err != nil {
+	if err := utilsysctl.SetSysctl(sysctlBridgeCallIptables, 1); err != nil {
 		glog.Warningf("can't set sysctl %s: %v", sysctlBridgeCallIptables, err)
 	}
 
@@ -479,7 +461,7 @@ func (proxier *Proxier) syncProxyRules() {
 	existingChains := make(map[utiliptables.Chain]string)
 	iptablesSaveRaw, err := proxier.iptables.Save(utiliptables.TableNAT)
 	if err != nil { // if we failed to get any rules
-		glog.Errorf("Failed to execute iptable-save, syncing all rules. %s", err.Error())
+		glog.Errorf("Failed to execute iptables-save, syncing all rules. %s", err.Error())
 	} else { // otherwise parse the output
 		existingChains = getChainLines(utiliptables.TableNAT, iptablesSaveRaw)
 	}

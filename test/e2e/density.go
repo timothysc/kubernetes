@@ -69,12 +69,6 @@ func extractLatencyMetrics(latencies []podLatencyData) LatencyMetric {
 	return LatencyMetric{Perc50: perc50, Perc90: perc90, Perc99: perc99}
 }
 
-func printLatencies(latencies []podLatencyData, header string) {
-	metrics := extractLatencyMetrics(latencies)
-	Logf("10%% %s: %v", header, latencies[(len(latencies)*9)/10:len(latencies)])
-	Logf("perc50: %v, perc90: %v, perc99: %v", metrics.Perc50, metrics.Perc90, metrics.Perc99)
-}
-
 // This test suite can take a long time to run, so by default it is added to
 // the ginkgo.skip list (see driver.go).
 // To run this suite you must explicitly ask for it by setting the
@@ -122,6 +116,10 @@ var _ = Describe("Density", func() {
 	})
 
 	AfterEach(func() {
+		// We can't call it explicitly at the end, because it will not be called
+		// if Expect() fails.
+		defer framework.afterEach()
+
 		// Remove any remaining pods from this test if the
 		// replication controller still exists and the replica count
 		// isn't 0.  This means the controller wasn't cleaned up
@@ -146,8 +144,6 @@ var _ = Describe("Density", func() {
 		highLatencyRequests, err := HighLatencyRequests(c, 3*time.Second)
 		expectNoError(err)
 		Expect(highLatencyRequests).NotTo(BeNumerically(">", 0), "There should be no high-latency requests")
-
-		framework.afterEach()
 	})
 
 	// Tests with "Skipped" substring in their name will be skipped when running
@@ -190,7 +186,7 @@ var _ = Describe("Density", func() {
 			expectNoError(err)
 			defer fileHndl.Close()
 			config := RCConfig{Client: c,
-				Image:                "gcr.io/google_containers/pause:go",
+				Image:                "beta.gcr.io/google_containers/pause:2.0",
 				Name:                 RCName,
 				Namespace:            ns,
 				PollInterval:         itArg.interval,
@@ -320,13 +316,16 @@ var _ = Describe("Density", func() {
 				}
 				for i := 1; i <= nodeCount; i++ {
 					name := additionalPodsPrefix + "-" + strconv.Itoa(i)
-					go createRunningPod(&wg, c, name, ns, "gcr.io/google_containers/pause:go", podLabels)
+					go createRunningPod(&wg, c, name, ns, "beta.gcr.io/google_containers/pause:2.0", podLabels)
 					time.Sleep(200 * time.Millisecond)
 				}
 				wg.Wait()
 
 				Logf("Waiting for all Pods begin observed by the watch...")
-				for start := time.Now(); len(watchTimes) < nodeCount && time.Since(start) < timeout; time.Sleep(10 * time.Second) {
+				for start := time.Now(); len(watchTimes) < nodeCount; time.Sleep(10 * time.Second) {
+					if time.Since(start) < timeout {
+						Failf("Timeout reached waiting for all Pods being observed by the watch.")
+					}
 				}
 				close(stopCh)
 

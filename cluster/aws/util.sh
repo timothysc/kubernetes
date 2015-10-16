@@ -244,7 +244,7 @@ case "${KUBE_OS_DISTRIBUTION}" in
     detect-jessie-image
     ;;
   *)
-    echo "Please specify AWS_IMAGE directly (distro not recognized)"
+    echo "Please specify AWS_IMAGE directly (distro ${KUBE_OS_DISTRIBUTION} not recognized)"
     exit 2
     ;;
 esac
@@ -417,8 +417,42 @@ function ensure-master-pd {
   fi
 }
 
+# Creates a new DHCP option set configured correctly for Kubernetes
+# Sets DHCP_OPTION_SET_ID
+function create-dhcp-option-set () {
+  case "${AWS_REGION}" in
+    us-east-1)
+      OPTION_SET_DOMAIN=ec2.internal
+      ;;
+
+    *)
+      OPTION_SET_DOMAIN="${AWS_REGION}.compute.internal"
+  esac
+
+  DHCP_OPTION_SET_ID=$($AWS_CMD create-dhcp-options --dhcp-configuration Key=domain-name,Values=${OPTION_SET_DOMAIN} Key=domain-name-servers,Values=AmazonProvidedDNS | json_val '["DhcpOptions"]["DhcpOptionsId"]')
+
+  add-tag ${DHCP_OPTION_SET_ID} Name kubernetes-dhcp-option-set
+  add-tag ${DHCP_OPTION_SET_ID} KubernetesCluster ${CLUSTER_ID}
+
+  $AWS_CMD associate-dhcp-options --dhcp-options-id ${DHCP_OPTION_SET_ID} --vpc-id ${VPC_ID}
+
+  echo "Using DHCP option set ${DHCP_OPTION_SET_ID}"
+}
+
 # Verify prereqs
 function verify-prereqs {
+  if [[ "${ENABLE_EXPERIMENTAL_API}" == "true" ]]; then
+    if [[ -z "${RUNTIME_CONFIG}" ]]; then
+      RUNTIME_CONFIG="experimental/v1alpha1=true"
+    else
+      # TODO: add checking if RUNTIME_CONFIG contains "experimental/v1alpha1=false" and appending "experimental/v1alpha1=true" if not.
+      if echo "${RUNTIME_CONFIG}" | grep -q -v "experimental/v1alpha1=true"; then
+        echo "Experimental API should be turned on, but is not turned on in RUNTIME_CONFIG!"
+        exit 1
+      fi
+    fi
+  fi
+
   if [[ "$(which aws)" == "" ]]; then
     echo "Can't find aws in PATH, please fix and retry."
     exit 1
@@ -498,10 +532,12 @@ function upload-server-tars() {
     # and then the bucket is most-simply named (s3.amazonaws.com)
     aws s3 mb "s3://${AWS_S3_BUCKET}" --region ${AWS_S3_REGION}
 
+    echo "Confirming bucket was created..."
+
     local attempt=0
     while true; do
       if ! aws s3 ls --region ${AWS_S3_REGION} "s3://${AWS_S3_BUCKET}" > /dev/null 2>&1; then
-        if (( attempt > 5 )); then
+        if (( attempt > 120 )); then
           echo
           echo -e "${color_red}Unable to confirm bucket creation." >&2
           echo "Please ensure that s3://${AWS_S3_BUCKET} exists" >&2
@@ -692,9 +728,12 @@ function kube-up {
 
   echo "Using VPC $VPC_ID"
 
+  create-dhcp-option-set
+
   if [[ -z "${SUBNET_ID:-}" ]]; then
     SUBNET_ID=$($AWS_CMD describe-subnets --filters Name=tag:KubernetesCluster,Values=${CLUSTER_ID} | get_subnet_id $VPC_ID $ZONE)
   fi
+
   if [[ -z "$SUBNET_ID" ]]; then
     echo "Creating subnet."
     SUBNET_ID=$($AWS_CMD create-subnet --cidr-block $INTERNAL_IP_BASE.0/24 --vpc-id $VPC_ID --availability-zone ${ZONE} | json_val '["Subnet"]["SubnetId"]')
@@ -803,6 +842,8 @@ function kube-up {
     echo "readonly ELASTICSEARCH_LOGGING_REPLICAS='${ELASTICSEARCH_LOGGING_REPLICAS:-}'"
     echo "readonly ENABLE_CLUSTER_DNS='${ENABLE_CLUSTER_DNS:-false}'"
     echo "readonly ENABLE_CLUSTER_UI='${ENABLE_CLUSTER_UI:-false}'"
+    echo "readonly ENABLE_EXPERIMENTAL_API='${ENABLE_EXPERIMENTAL_API:-false}'"
+    echo "readonly RUNTIME_CONFIG='${RUNTIME_CONFIG}'"
     echo "readonly DNS_REPLICAS='${DNS_REPLICAS:-}'"
     echo "readonly DNS_SERVER_IP='${DNS_SERVER_IP:-}'"
     echo "readonly DNS_DOMAIN='${DNS_DOMAIN:-}'"
@@ -812,6 +853,10 @@ function kube-up {
     echo "readonly KUBE_PROXY_TOKEN='${KUBE_PROXY_TOKEN}'"
     echo "readonly DOCKER_STORAGE='${DOCKER_STORAGE:-}'"
     echo "readonly MASTER_EXTRA_SANS='${MASTER_EXTRA_SANS:-}'"
+    echo "readonly NETWORK_PROVIDER='${NETWORK_PROVIDER:-}'"
+    echo "readonly OPENCONTRAIL_TAG='${OPENCONTRAIL_TAG:-}'"
+    echo "readonly OPENCONTRAIL_KUBERNETES_TAG='${OPENCONTRAIL_KUBERNETES_TAG:-}'"
+    echo "readonly OPENCONTRAIL_PUBLIC_SUBNET='${OPENCONTRAIL_PUBLIC_SUBNET:-}'"
     grep -v "^#" "${KUBE_ROOT}/cluster/aws/templates/common.sh"
     grep -v "^#" "${KUBE_ROOT}/cluster/aws/templates/format-disks.sh"
     grep -v "^#" "${KUBE_ROOT}/cluster/aws/templates/setup-master-pd.sh"

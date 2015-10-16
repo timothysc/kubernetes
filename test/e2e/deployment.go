@@ -19,7 +19,7 @@ package e2e
 import (
 	"fmt"
 	"k8s.io/kubernetes/pkg/api"
-	"k8s.io/kubernetes/pkg/apis/experimental"
+	"k8s.io/kubernetes/pkg/apis/extensions"
 	deploymentUtil "k8s.io/kubernetes/pkg/util/deployment"
 
 	. "github.com/onsi/ginkgo"
@@ -46,11 +46,11 @@ func testNewDeployment(f *Framework) {
 	deploymentName := "nginx-deployment"
 	podLabels := map[string]string{"name": "nginx"}
 	Logf("Creating simple deployment %s", deploymentName)
-	_, err := c.Deployments(ns).Create(&experimental.Deployment{
+	_, err := c.Deployments(ns).Create(&extensions.Deployment{
 		ObjectMeta: api.ObjectMeta{
 			Name: deploymentName,
 		},
-		Spec: experimental.DeploymentSpec{
+		Spec: extensions.DeploymentSpec{
 			Replicas:       1,
 			Selector:       podLabels,
 			UniqueLabelKey: "deployment.kubernetes.io/podTemplateHash",
@@ -95,7 +95,12 @@ func testRollingUpdateDeployment(f *Framework) {
 	ns := f.Namespace.Name
 	c := f.Client
 	// Create nginx pods.
-	podLabels := map[string]string{"name": "sample-pod"}
+	deploymentPodLabels := map[string]string{"name": "sample-pod"}
+	rcPodLabels := map[string]string{
+		"name": "sample-pod",
+		"pod":  "nginx",
+	}
+
 	rcName := "nginx-controller"
 	_, err := c.ReplicationControllers(ns).Create(&api.ReplicationController{
 		ObjectMeta: api.ObjectMeta{
@@ -103,10 +108,10 @@ func testRollingUpdateDeployment(f *Framework) {
 		},
 		Spec: api.ReplicationControllerSpec{
 			Replicas: 3,
-			Selector: podLabels,
+			Selector: rcPodLabels,
 			Template: &api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
-					Labels: podLabels,
+					Labels: rcPodLabels,
 				},
 				Spec: api.PodSpec{
 					Containers: []api.Container{
@@ -134,17 +139,17 @@ func testRollingUpdateDeployment(f *Framework) {
 	// Create a deployment to delete nginx pods and instead bring up redis pods.
 	deploymentName := "redis-deployment"
 	Logf("Creating deployment %s", deploymentName)
-	newDeployment := experimental.Deployment{
+	newDeployment := extensions.Deployment{
 		ObjectMeta: api.ObjectMeta{
 			Name: deploymentName,
 		},
-		Spec: experimental.DeploymentSpec{
+		Spec: extensions.DeploymentSpec{
 			Replicas:       3,
-			Selector:       podLabels,
+			Selector:       deploymentPodLabels,
 			UniqueLabelKey: "deployment.kubernetes.io/podTemplateHash",
 			Template: &api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
-					Labels: podLabels,
+					Labels: deploymentPodLabels,
 				},
 				Spec: api.PodSpec{
 					Containers: []api.Container{
@@ -164,14 +169,19 @@ func testRollingUpdateDeployment(f *Framework) {
 		Expect(c.Deployments(ns).Delete(deploymentName, nil)).NotTo(HaveOccurred())
 	}()
 
-	waitForDeploymentStatus(c, ns, deploymentName, 3, 2, 4)
+	err = waitForDeploymentStatus(c, ns, deploymentName, 3, 2, 4)
+	Expect(err).NotTo(HaveOccurred())
 }
 
 func testRollingUpdateDeploymentEvents(f *Framework) {
 	ns := f.Namespace.Name
 	c := f.Client
 	// Create nginx pods.
-	podLabels := map[string]string{"name": "sample-pod"}
+	deploymentPodLabels := map[string]string{"name": "sample-pod"}
+	rcPodLabels := map[string]string{
+		"name": "sample-pod",
+		"pod":  "nginx",
+	}
 	rcName := "nginx-controller"
 	_, err := c.ReplicationControllers(ns).Create(&api.ReplicationController{
 		ObjectMeta: api.ObjectMeta{
@@ -179,10 +189,10 @@ func testRollingUpdateDeploymentEvents(f *Framework) {
 		},
 		Spec: api.ReplicationControllerSpec{
 			Replicas: 1,
-			Selector: podLabels,
+			Selector: rcPodLabels,
 			Template: &api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
-					Labels: podLabels,
+					Labels: rcPodLabels,
 				},
 				Spec: api.PodSpec{
 					Containers: []api.Container{
@@ -210,17 +220,17 @@ func testRollingUpdateDeploymentEvents(f *Framework) {
 	// Create a deployment to delete nginx pods and instead bring up redis pods.
 	deploymentName := "redis-deployment"
 	Logf("Creating deployment %s", deploymentName)
-	newDeployment := experimental.Deployment{
+	newDeployment := extensions.Deployment{
 		ObjectMeta: api.ObjectMeta{
 			Name: deploymentName,
 		},
-		Spec: experimental.DeploymentSpec{
+		Spec: extensions.DeploymentSpec{
 			Replicas:       1,
-			Selector:       podLabels,
+			Selector:       deploymentPodLabels,
 			UniqueLabelKey: "deployment.kubernetes.io/podTemplateHash",
 			Template: &api.PodTemplateSpec{
 				ObjectMeta: api.ObjectMeta{
-					Labels: podLabels,
+					Labels: deploymentPodLabels,
 				},
 				Spec: api.PodSpec{
 					Containers: []api.Container{
@@ -240,10 +250,12 @@ func testRollingUpdateDeploymentEvents(f *Framework) {
 		Expect(c.Deployments(ns).Delete(deploymentName, nil)).NotTo(HaveOccurred())
 	}()
 
-	waitForDeploymentStatus(c, ns, deploymentName, 1, 0, 2)
+	err = waitForDeploymentStatus(c, ns, deploymentName, 1, 0, 2)
+	Expect(err).NotTo(HaveOccurred())
 	// Verify that the pods were scaled up and down as expected. We use events to verify that.
 	deployment, err := c.Deployments(ns).Get(deploymentName)
 	Expect(err).NotTo(HaveOccurred())
+	waitForEvents(c, ns, deployment, 2)
 	events, err := c.Events(ns).Search(deployment)
 	if err != nil {
 		Logf("error in listing events: %s", err)

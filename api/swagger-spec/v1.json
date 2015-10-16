@@ -560,7 +560,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -1184,7 +1184,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -1808,7 +1808,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -2392,7 +2392,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -2920,7 +2920,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -3761,7 +3761,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -4404,7 +4404,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -4921,7 +4921,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -7088,7 +7088,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -7712,7 +7712,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -8013,6 +8013,65 @@
         "code": 200,
         "message": "OK",
         "responseModel": "json.WatchEvent"
+       }
+      ],
+      "produces": [
+       "application/json"
+      ],
+      "consumes": [
+       "*/*"
+      ]
+     }
+    ]
+   },
+   {
+    "path": "/api/v1/namespaces/{namespace}/replicationcontrollers/{name}/status",
+    "description": "API at /api/v1",
+    "operations": [
+     {
+      "type": "v1.ReplicationController",
+      "method": "PUT",
+      "summary": "replace status of the specified ReplicationController",
+      "nickname": "replaceNamespacedReplicationControllerStatus",
+      "parameters": [
+       {
+        "type": "string",
+        "paramType": "query",
+        "name": "pretty",
+        "description": "If 'true', then the output is pretty printed.",
+        "required": false,
+        "allowMultiple": false
+       },
+       {
+        "type": "v1.ReplicationController",
+        "paramType": "body",
+        "name": "body",
+        "description": "",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "namespace",
+        "description": "object name and auth scope, such as for teams and projects",
+        "required": true,
+        "allowMultiple": false
+       },
+       {
+        "type": "string",
+        "paramType": "path",
+        "name": "name",
+        "description": "name of the ReplicationController",
+        "required": true,
+        "allowMultiple": false
+       }
+      ],
+      "responseMessages": [
+       {
+        "code": 200,
+        "message": "OK",
+        "responseModel": "v1.ReplicationController"
        }
       ],
       "produces": [
@@ -8336,7 +8395,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -9019,7 +9078,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -9643,7 +9702,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -10267,7 +10326,7 @@
         "allowMultiple": false
        },
        {
-        "type": "api.Patch",
+        "type": "unversioned.Patch",
         "paramType": "body",
         "name": "body",
         "description": "",
@@ -11355,8 +11414,9 @@
      }
     }
    },
-   "api.Patch": {
-    "id": "api.Patch",
+   "unversioned.Patch": {
+    "id": "unversioned.Patch",
+    "description": "Patch is provided to give a concrete name and type to the Kubernetes PATCH request body.",
     "properties": {}
    },
    "unversioned.Status": {
@@ -12646,6 +12706,10 @@
       "type": "boolean",
       "description": "Use the host's ipc namespace. Optional: Default to false."
      },
+     "securityContext": {
+      "$ref": "v1.PodSecurityContext",
+      "description": "SecurityContext holds pod-level security attributes and common container settings"
+     },
      "imagePullSecrets": {
       "type": "array",
       "items": {
@@ -13200,6 +13264,11 @@
       "description": "Level is SELinux level label that applies to the container. More info: http://releases.k8s.io/HEAD/docs/user-guide/labels.md"
      }
     }
+   },
+   "v1.PodSecurityContext": {
+    "id": "v1.PodSecurityContext",
+    "description": "PodSecurityContext holds pod-level security attributes and common container settings.",
+    "properties": {}
    },
    "v1.PodStatus": {
     "id": "v1.PodStatus",

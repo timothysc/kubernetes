@@ -241,7 +241,11 @@ func (e *Etcd) Update(ctx api.Context, obj runtime.Object) (runtime.Object, bool
 	creating := false
 	out := e.NewFunc()
 	err = e.Storage.GuaranteedUpdate(ctx, key, out, true, func(existing runtime.Object, res storage.ResponseMeta) (runtime.Object, *uint64, error) {
+<<<<<<< HEAD
 		version, err := e.Storage.Versioner(ctx).ObjectResourceVersion(existing)
+=======
+		version, err := e.Storage.Versioner().ObjectResourceVersion(existing)
+>>>>>>> origin/master
 		if err != nil {
 			return nil, nil, err
 		}

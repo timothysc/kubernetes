@@ -14,11 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package gce_cloud
+package gce
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestGetRegion(t *testing.T) {
 	gce := &GCECloud{

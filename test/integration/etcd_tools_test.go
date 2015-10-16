@@ -32,14 +32,22 @@ import (
 	"k8s.io/kubernetes/pkg/tools/etcdtest"
 	"k8s.io/kubernetes/pkg/watch"
 	"k8s.io/kubernetes/test/integration/framework"
+<<<<<<< HEAD
 	etcd "github.com/coreos/etcd/client"
+=======
+
+>>>>>>> origin/master
 	"golang.org/x/net/context"
 )
 
 func TestSet(t *testing.T) {
 	client := framework.NewEtcdClient()
+<<<<<<< HEAD
 	kAPI := etcd.NewKeysAPI(client)
 	etcdStorage := etcstorage.NewEtcdStorage(client, kAPI, testapi.Default.Codec(), "")
+=======
+	etcdStorage := etcd.NewEtcdStorage(client, testapi.Default.Codec(), "")
+>>>>>>> origin/master
 	ctx := context.TODO()
 	framework.WithEtcdKey(func(key string) {
 		testObject := api.ServiceAccount{ObjectMeta: api.ObjectMeta{Name: "foo"}}
@@ -63,8 +71,12 @@ func TestSet(t *testing.T) {
 
 func TestGet(t *testing.T) {
 	client := framework.NewEtcdClient()
+<<<<<<< HEAD
 	kAPI := etcd.NewKeysAPI(client)
 	etcdStorage := etcstorage.NewEtcdStorage(client, kAPI, testapi.Default.Codec(), "")
+=======
+	etcdStorage := etcd.NewEtcdStorage(client, testapi.Default.Codec(), "")
+>>>>>>> origin/master
 	ctx := context.TODO()
 	framework.WithEtcdKey(func(key string) {
 		testObject := api.ServiceAccount{ObjectMeta: api.ObjectMeta{Name: "foo"}}
@@ -90,8 +102,12 @@ func TestGet(t *testing.T) {
 
 func TestWriteTTL(t *testing.T) {
 	client := framework.NewEtcdClient()
+<<<<<<< HEAD
 	kAPI := etcd.NewKeysAPI(client)
 	etcdStorage := etcstorage.NewEtcdStorage(client, kAPI, testapi.Default.Codec(), "")
+=======
+	etcdStorage := etcd.NewEtcdStorage(client, testapi.Default.Codec(), "")
+>>>>>>> origin/master
 	ctx := context.TODO()
 	framework.WithEtcdKey(func(key string) {
 		testObject := api.ServiceAccount{ObjectMeta: api.ObjectMeta{Name: "foo"}}
@@ -145,8 +161,12 @@ func TestWriteTTL(t *testing.T) {
 
 func TestWatch(t *testing.T) {
 	client := framework.NewEtcdClient()
+<<<<<<< HEAD
 	kAPI := etcd.NewKeysAPI(client)
 	etcdStorage := etcstorage.NewEtcdStorage(client, kAPI, testapi.Default.Codec(), etcdtest.PathPrefix())
+=======
+	etcdStorage := etcd.NewEtcdStorage(client, testapi.Default.Codec(), etcdtest.PathPrefix())
+>>>>>>> origin/master
 	ctx := context.TODO()
 	framework.WithEtcdKey(func(key string) {
 		key = etcdtest.AddPrefix(key)
@@ -157,7 +177,10 @@ func TestWatch(t *testing.T) {
 		expectedVersion := resp.Node.ModifiedIndex
 
 		// watch should load the object at the current index
+<<<<<<< HEAD
 		fmt.Printf("******Watching %v\n",key)
+=======
+>>>>>>> origin/master
 		w, err := etcdStorage.Watch(ctx, key, 0, storage.Everything)
 		if err != nil {
 			t.Fatalf("Unexpected error: %v", err)

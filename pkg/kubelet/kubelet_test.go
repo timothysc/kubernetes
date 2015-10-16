@@ -45,11 +45,15 @@ import (
 	"k8s.io/kubernetes/pkg/kubelet/container"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/network"
+	kubepod "k8s.io/kubernetes/pkg/kubelet/pod"
+	"k8s.io/kubernetes/pkg/kubelet/prober"
 	"k8s.io/kubernetes/pkg/kubelet/status"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/runtime"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util"
 	"k8s.io/kubernetes/pkg/util/bandwidth"
+	"k8s.io/kubernetes/pkg/util/sets"
 	"k8s.io/kubernetes/pkg/version"
 	"k8s.io/kubernetes/pkg/volume"
 	_ "k8s.io/kubernetes/pkg/volume/host_path"
@@ -77,7 +81,7 @@ type TestKubelet struct {
 	fakeRuntime      *kubecontainer.FakeRuntime
 	fakeCadvisor     *cadvisor.Mock
 	fakeKubeClient   *testclient.Fake
-	fakeMirrorClient *fakeMirrorClient
+	fakeMirrorClient *kubepod.FakeMirrorClient
 }
 
 func newTestKubelet(t *testing.T) *TestKubelet {
@@ -101,11 +105,10 @@ func newTestKubelet(t *testing.T) *TestKubelet {
 	if err := os.MkdirAll(kubelet.rootDirectory, 0750); err != nil {
 		t.Fatalf("can't mkdir(%q): %v", kubelet.rootDirectory, err)
 	}
-	kubelet.sourcesReady = func() bool { return true }
+	kubelet.sourcesReady = func(_ sets.String) bool { return true }
 	kubelet.masterServiceNamespace = api.NamespaceDefault
 	kubelet.serviceLister = testServiceLister{}
 	kubelet.nodeLister = testNodeLister{}
-	kubelet.readinessManager = kubecontainer.NewReadinessManager()
 	kubelet.recorder = fakeRecorder
 	kubelet.statusManager = status.NewManager(fakeKubeClient)
 	if err := kubelet.setupDataDirs(); err != nil {
@@ -114,8 +117,8 @@ func newTestKubelet(t *testing.T) *TestKubelet {
 	kubelet.daemonEndpoints = &api.NodeDaemonEndpoints{}
 	mockCadvisor := &cadvisor.Mock{}
 	kubelet.cadvisor = mockCadvisor
-	podManager, fakeMirrorClient := newFakePodManager()
-	kubelet.podManager = podManager
+	fakeMirrorClient := kubepod.NewFakeMirrorClient()
+	kubelet.podManager = kubepod.NewBasicPodManager(fakeMirrorClient)
 	kubelet.containerRefManager = kubecontainer.NewRefManager()
 	diskSpaceManager, err := newDiskSpaceManager(mockCadvisor, DiskSpacePolicy{})
 	if err != nil {
@@ -130,6 +133,10 @@ func newTestKubelet(t *testing.T) *TestKubelet {
 		runtimeCache: kubelet.runtimeCache,
 		t:            t,
 	}
+
+	kubelet.prober = prober.FakeProber{}
+	kubelet.probeManager = prober.FakeManager{}
+
 	kubelet.volumeManager = newVolumeManager()
 	kubelet.containerManager, _ = newContainerManager(fakeContainerMgrMountInt(), mockCadvisor, "", "", "")
 	kubelet.networkConfigured = true
@@ -307,7 +314,7 @@ func TestKubeletDirsCompat(t *testing.T) {
 	}
 }
 
-var emptyPodUIDs map[types.UID]SyncPodType
+var emptyPodUIDs map[types.UID]kubetypes.SyncPodType
 
 func TestSyncLoopTimeUpdate(t *testing.T) {
 	testKubelet := newTestKubelet(t)
@@ -319,12 +326,12 @@ func TestSyncLoopTimeUpdate(t *testing.T) {
 		t.Errorf("Unexpected sync loop time: %s, expected 0", loopTime1)
 	}
 
-	kubelet.syncLoopIteration(make(chan PodUpdate), kubelet)
+	kubelet.syncLoopIteration(make(chan kubetypes.PodUpdate), kubelet)
 	loopTime2 := kubelet.LatestLoopEntryTime()
 	if loopTime2.IsZero() {
 		t.Errorf("Unexpected sync loop time: 0, expected non-zero value.")
 	}
-	kubelet.syncLoopIteration(make(chan PodUpdate), kubelet)
+	kubelet.syncLoopIteration(make(chan kubetypes.PodUpdate), kubelet)
 	loopTime3 := kubelet.LatestLoopEntryTime()
 	if !loopTime3.After(loopTime1) {
 		t.Errorf("Sync Loop Time was not updated correctly. Second update timestamp should be greater than first update timestamp")
@@ -341,7 +348,7 @@ func TestSyncLoopAbort(t *testing.T) {
 	// the channel close
 	kubelet.resyncInterval = time.Second * 30
 
-	ch := make(chan PodUpdate)
+	ch := make(chan kubetypes.PodUpdate)
 	close(ch)
 
 	// sanity check (also prevent this test from hanging in the next step)
@@ -389,7 +396,7 @@ func TestSyncPodsDeletesWhenSourcesAreReady(t *testing.T) {
 	testKubelet.fakeCadvisor.On("DockerImagesFsInfo").Return(cadvisorApiv2.FsInfo{}, nil)
 	testKubelet.fakeCadvisor.On("RootFsInfo").Return(cadvisorApiv2.FsInfo{}, nil)
 	kubelet := testKubelet.kubelet
-	kubelet.sourcesReady = func() bool { return ready }
+	kubelet.sourcesReady = func(_ sets.String) bool { return ready }
 
 	fakeRuntime.PodList = []*kubecontainer.Pod{
 		{
@@ -582,7 +589,7 @@ func TestGetContainerInfo(t *testing.T) {
 			Containers: []*kubecontainer.Container{
 				{
 					Name: "foo",
-					ID:   types.UID(containerID),
+					ID:   kubecontainer.ContainerID{"test", containerID},
 				},
 			},
 		},
@@ -664,7 +671,7 @@ func TestGetContainerInfoWhenCadvisorFailed(t *testing.T) {
 			Namespace: "ns",
 			Containers: []*kubecontainer.Container{
 				{Name: "foo",
-					ID: types.UID(containerID),
+					ID: kubecontainer.ContainerID{"test", containerID},
 				},
 			},
 		},
@@ -748,7 +755,7 @@ func TestGetContainerInfoWithNoMatchingContainers(t *testing.T) {
 			Namespace: "ns",
 			Containers: []*kubecontainer.Container{
 				{Name: "bar",
-					ID: types.UID("fakeID"),
+					ID: kubecontainer.ContainerID{"test", "fakeID"},
 				},
 			}},
 	}
@@ -768,7 +775,7 @@ func TestGetContainerInfoWithNoMatchingContainers(t *testing.T) {
 
 type fakeContainerCommandRunner struct {
 	Cmd    []string
-	ID     string
+	ID     kubecontainer.ContainerID
 	PodID  types.UID
 	E      error
 	Stdin  io.Reader
@@ -779,13 +786,13 @@ type fakeContainerCommandRunner struct {
 	Stream io.ReadWriteCloser
 }
 
-func (f *fakeContainerCommandRunner) RunInContainer(id string, cmd []string) ([]byte, error) {
+func (f *fakeContainerCommandRunner) RunInContainer(id kubecontainer.ContainerID, cmd []string) ([]byte, error) {
 	f.Cmd = cmd
 	f.ID = id
 	return []byte{}, f.E
 }
 
-func (f *fakeContainerCommandRunner) ExecInContainer(id string, cmd []string, in io.Reader, out, err io.WriteCloser, tty bool) error {
+func (f *fakeContainerCommandRunner) ExecInContainer(id kubecontainer.ContainerID, cmd []string, in io.Reader, out, err io.WriteCloser, tty bool) error {
 	f.Cmd = cmd
 	f.ID = id
 	f.Stdin = in
@@ -831,7 +838,7 @@ func TestRunInContainer(t *testing.T) {
 	fakeCommandRunner := fakeContainerCommandRunner{}
 	kubelet.runner = &fakeCommandRunner
 
-	containerID := "abc1234"
+	containerID := kubecontainer.ContainerID{"test", "abc1234"}
 	fakeRuntime.PodList = []*kubecontainer.Pod{
 		{
 			ID:        "12345678",
@@ -839,7 +846,7 @@ func TestRunInContainer(t *testing.T) {
 			Namespace: "nsFoo",
 			Containers: []*kubecontainer.Container{
 				{Name: "containerFoo",
-					ID: types.UID(containerID),
+					ID: containerID,
 				},
 			},
 		},
@@ -1861,7 +1868,7 @@ func TestExecInContainerNoSuchPod(t *testing.T) {
 	if err == nil {
 		t.Fatal("unexpected non-error")
 	}
-	if fakeCommandRunner.ID != "" {
+	if !fakeCommandRunner.ID.IsEmpty() {
 		t.Fatal("unexpected invocation of runner.ExecInContainer")
 	}
 }
@@ -1883,7 +1890,7 @@ func TestExecInContainerNoSuchContainer(t *testing.T) {
 			Namespace: podNamespace,
 			Containers: []*kubecontainer.Container{
 				{Name: "bar",
-					ID: "barID"},
+					ID: kubecontainer.ContainerID{"test", "barID"}},
 			},
 		},
 	}
@@ -1905,7 +1912,7 @@ func TestExecInContainerNoSuchContainer(t *testing.T) {
 	if err == nil {
 		t.Fatal("unexpected non-error")
 	}
-	if fakeCommandRunner.ID != "" {
+	if !fakeCommandRunner.ID.IsEmpty() {
 		t.Fatal("unexpected invocation of runner.ExecInContainer")
 	}
 }
@@ -1946,7 +1953,7 @@ func TestExecInContainer(t *testing.T) {
 			Namespace: podNamespace,
 			Containers: []*kubecontainer.Container{
 				{Name: containerID,
-					ID: types.UID(containerID),
+					ID: kubecontainer.ContainerID{"test", containerID},
 				},
 			},
 		},
@@ -1969,7 +1976,7 @@ func TestExecInContainer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %s", err)
 	}
-	if e, a := containerID, fakeCommandRunner.ID; e != a {
+	if e, a := containerID, fakeCommandRunner.ID.ID; e != a {
 		t.Fatalf("container name: expected %q, got %q", e, a)
 	}
 	if e, a := command, fakeCommandRunner.Cmd; !reflect.DeepEqual(e, a) {
@@ -2010,7 +2017,7 @@ func TestPortForwardNoSuchPod(t *testing.T) {
 	if err == nil {
 		t.Fatal("unexpected non-error")
 	}
-	if fakeCommandRunner.ID != "" {
+	if !fakeCommandRunner.ID.IsEmpty() {
 		t.Fatal("unexpected invocation of runner.PortForward")
 	}
 }
@@ -2031,7 +2038,7 @@ func TestPortForward(t *testing.T) {
 			Containers: []*kubecontainer.Container{
 				{
 					Name: "foo",
-					ID:   "containerFoo",
+					ID:   kubecontainer.ContainerID{"test", "containerFoo"},
 				},
 			},
 		},
@@ -2653,7 +2660,7 @@ func TestUpdateNodeStatusError(t *testing.T) {
 }
 
 func TestCreateMirrorPod(t *testing.T) {
-	for _, updateType := range []SyncPodType{SyncPodCreate, SyncPodUpdate} {
+	for _, updateType := range []kubetypes.SyncPodType{kubetypes.SyncPodCreate, kubetypes.SyncPodUpdate} {
 		testKubelet := newTestKubelet(t)
 		kl := testKubelet.kubelet
 		manager := testKubelet.fakeMirrorClient
@@ -2663,7 +2670,7 @@ func TestCreateMirrorPod(t *testing.T) {
 				Name:      "bar",
 				Namespace: "foo",
 				Annotations: map[string]string{
-					ConfigSourceAnnotationKey: "file",
+					kubetypes.ConfigSourceAnnotationKey: "file",
 				},
 			},
 		}
@@ -2696,7 +2703,7 @@ func TestDeleteOutdatedMirrorPod(t *testing.T) {
 			Name:      "foo",
 			Namespace: "ns",
 			Annotations: map[string]string{
-				ConfigSourceAnnotationKey: "file",
+				kubetypes.ConfigSourceAnnotationKey: "file",
 			},
 		},
 		Spec: api.PodSpec{
@@ -2712,8 +2719,8 @@ func TestDeleteOutdatedMirrorPod(t *testing.T) {
 			Name:      "foo",
 			Namespace: "ns",
 			Annotations: map[string]string{
-				ConfigSourceAnnotationKey: "api",
-				ConfigMirrorAnnotationKey: "mirror",
+				kubetypes.ConfigSourceAnnotationKey: "api",
+				kubetypes.ConfigMirrorAnnotationKey: "mirror",
 			},
 		},
 		Spec: api.PodSpec{
@@ -2725,7 +2732,7 @@ func TestDeleteOutdatedMirrorPod(t *testing.T) {
 
 	pods := []*api.Pod{pod, mirrorPod}
 	kl.podManager.SetPods(pods)
-	err := kl.syncPod(pod, mirrorPod, container.Pod{}, SyncPodUpdate)
+	err := kl.syncPod(pod, mirrorPod, container.Pod{}, kubetypes.SyncPodUpdate)
 	if err != nil {
 		t.Errorf("unexpected error: %v", err)
 	}
@@ -2750,8 +2757,8 @@ func TestDeleteOrphanedMirrorPods(t *testing.T) {
 				Name:      "pod1",
 				Namespace: "ns",
 				Annotations: map[string]string{
-					ConfigSourceAnnotationKey: "api",
-					ConfigMirrorAnnotationKey: "mirror",
+					kubetypes.ConfigSourceAnnotationKey: "api",
+					kubetypes.ConfigMirrorAnnotationKey: "mirror",
 				},
 			},
 		},
@@ -2761,8 +2768,8 @@ func TestDeleteOrphanedMirrorPods(t *testing.T) {
 				Name:      "pod2",
 				Namespace: "ns",
 				Annotations: map[string]string{
-					ConfigSourceAnnotationKey: "api",
-					ConfigMirrorAnnotationKey: "mirror",
+					kubetypes.ConfigSourceAnnotationKey: "api",
+					kubetypes.ConfigMirrorAnnotationKey: "mirror",
 				},
 			},
 		},
@@ -2793,7 +2800,7 @@ func TestGetContainerInfoForMirrorPods(t *testing.T) {
 				Name:      "qux",
 				Namespace: "ns",
 				Annotations: map[string]string{
-					ConfigSourceAnnotationKey: "file",
+					kubetypes.ConfigSourceAnnotationKey: "file",
 				},
 			},
 			Spec: api.PodSpec{
@@ -2808,8 +2815,8 @@ func TestGetContainerInfoForMirrorPods(t *testing.T) {
 				Name:      "qux",
 				Namespace: "ns",
 				Annotations: map[string]string{
-					ConfigSourceAnnotationKey: "api",
-					ConfigMirrorAnnotationKey: "mirror",
+					kubetypes.ConfigSourceAnnotationKey: "api",
+					kubetypes.ConfigMirrorAnnotationKey: "mirror",
 				},
 			},
 			Spec: api.PodSpec{
@@ -2843,7 +2850,7 @@ func TestGetContainerInfoForMirrorPods(t *testing.T) {
 			Containers: []*kubecontainer.Container{
 				{
 					Name: "foo",
-					ID:   types.UID(containerID),
+					ID:   kubecontainer.ContainerID{"test", containerID},
 				},
 			},
 		},
@@ -2875,7 +2882,7 @@ func TestDoNotCacheStatusForStaticPods(t *testing.T) {
 				Name:      "staticFoo",
 				Namespace: "new",
 				Annotations: map[string]string{
-					ConfigSourceAnnotationKey: "file",
+					kubetypes.ConfigSourceAnnotationKey: "file",
 				},
 			},
 			Spec: api.PodSpec{
@@ -2900,7 +2907,7 @@ func TestHostNetworkAllowed(t *testing.T) {
 
 	capabilities.SetForTests(capabilities.Capabilities{
 		PrivilegedSources: capabilities.PrivilegedSources{
-			HostNetworkSources: []string{ApiserverSource, FileSource},
+			HostNetworkSources: []string{kubetypes.ApiserverSource, kubetypes.FileSource},
 		},
 	})
 	pod := &api.Pod{
@@ -2909,18 +2916,20 @@ func TestHostNetworkAllowed(t *testing.T) {
 			Name:      "foo",
 			Namespace: "new",
 			Annotations: map[string]string{
-				ConfigSourceAnnotationKey: FileSource,
+				kubetypes.ConfigSourceAnnotationKey: kubetypes.FileSource,
 			},
 		},
 		Spec: api.PodSpec{
 			Containers: []api.Container{
 				{Name: "foo"},
 			},
-			HostNetwork: true,
+			SecurityContext: &api.PodSecurityContext{
+				HostNetwork: true,
+			},
 		},
 	}
 	kubelet.podManager.SetPods([]*api.Pod{pod})
-	err := kubelet.syncPod(pod, nil, container.Pod{}, SyncPodUpdate)
+	err := kubelet.syncPod(pod, nil, container.Pod{}, kubetypes.SyncPodUpdate)
 	if err != nil {
 		t.Errorf("expected pod infra creation to succeed: %v", err)
 	}
@@ -2941,17 +2950,19 @@ func TestHostNetworkDisallowed(t *testing.T) {
 			Name:      "foo",
 			Namespace: "new",
 			Annotations: map[string]string{
-				ConfigSourceAnnotationKey: FileSource,
+				kubetypes.ConfigSourceAnnotationKey: kubetypes.FileSource,
 			},
 		},
 		Spec: api.PodSpec{
 			Containers: []api.Container{
 				{Name: "foo"},
 			},
-			HostNetwork: true,
+			SecurityContext: &api.PodSecurityContext{
+				HostNetwork: true,
+			},
 		},
 	}
-	err := kubelet.syncPod(pod, nil, container.Pod{}, SyncPodUpdate)
+	err := kubelet.syncPod(pod, nil, container.Pod{}, kubetypes.SyncPodUpdate)
 	if err == nil {
 		t.Errorf("expected pod infra creation to fail")
 	}
@@ -2978,7 +2989,7 @@ func TestPrivilegeContainerAllowed(t *testing.T) {
 		},
 	}
 	kubelet.podManager.SetPods([]*api.Pod{pod})
-	err := kubelet.syncPod(pod, nil, container.Pod{}, SyncPodUpdate)
+	err := kubelet.syncPod(pod, nil, container.Pod{}, kubetypes.SyncPodUpdate)
 	if err != nil {
 		t.Errorf("expected pod infra creation to succeed: %v", err)
 	}
@@ -3004,7 +3015,7 @@ func TestPrivilegeContainerDisallowed(t *testing.T) {
 			},
 		},
 	}
-	err := kubelet.syncPod(pod, nil, container.Pod{}, SyncPodUpdate)
+	err := kubelet.syncPod(pod, nil, container.Pod{}, kubetypes.SyncPodUpdate)
 	if err == nil {
 		t.Errorf("expected pod infra creation to fail")
 	}

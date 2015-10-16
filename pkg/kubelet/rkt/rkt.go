@@ -27,6 +27,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	appcschema "github.com/appc/spec/schema"
@@ -41,11 +42,13 @@ import (
 	"k8s.io/kubernetes/pkg/credentialprovider"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/prober"
-	kubeletUtil "k8s.io/kubernetes/pkg/kubelet/util"
+	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
 	"k8s.io/kubernetes/pkg/probe"
 	"k8s.io/kubernetes/pkg/securitycontext"
 	"k8s.io/kubernetes/pkg/types"
 	"k8s.io/kubernetes/pkg/util"
+	utilexec "k8s.io/kubernetes/pkg/util/exec"
+	"k8s.io/kubernetes/pkg/util/sets"
 )
 
 const (
@@ -68,21 +71,13 @@ const (
 	authDir            = "auth.d"
 	dockerAuthTemplate = `{"rktKind":"dockerAuth","rktVersion":"v1","registries":[%q],"credentials":{"user":%q,"password":%q}}`
 
-	// TODO(yifan): Merge with ContainerGCPolicy, i.e., derive
-	// the grace period from MinAge in ContainerGCPolicy.
-	//
-	// Duration to wait before discarding inactive pods from garbage
-	defaultGracePeriod = "1m"
-	// Duration to wait before expiring prepared pods.
-	defaultExpirePrepared = "1m"
-
 	defaultImageTag = "latest"
 )
 
-// runtime implements the Containerruntime for rkt. The implementation
+// Runtime implements the Containerruntime for rkt. The implementation
 // uses systemd, so in order to run this runtime, systemd must be installed
 // on the machine.
-type runtime struct {
+type Runtime struct {
 	systemd *dbus.Conn
 	// The absolute path to rkt binary.
 	rktBinAbsPath string
@@ -94,12 +89,11 @@ type runtime struct {
 	generator           kubecontainer.RunContainerOptionsGenerator
 	recorder            record.EventRecorder
 	prober              prober.Prober
-	readinessManager    *kubecontainer.ReadinessManager
 	volumeGetter        volumeGetter
 	imagePuller         kubecontainer.ImagePuller
 }
 
-var _ kubecontainer.Runtime = &runtime{}
+var _ kubecontainer.Runtime = &Runtime{}
 
 // TODO(yifan): Remove this when volumeManager is moved to separate package.
 type volumeGetter interface {
@@ -113,8 +107,8 @@ func New(config *Config,
 	generator kubecontainer.RunContainerOptionsGenerator,
 	recorder record.EventRecorder,
 	containerRefManager *kubecontainer.RefManager,
-	readinessManager *kubecontainer.ReadinessManager,
-	volumeGetter volumeGetter) (kubecontainer.Runtime, error) {
+	prober prober.Prober,
+	volumeGetter volumeGetter, imageBackOff *util.Backoff) (*Runtime, error) {
 
 	systemdVersion, err := getSystemdVersion()
 	if err != nil {
@@ -143,7 +137,7 @@ func New(config *Config,
 		}
 	}
 
-	rkt := &runtime{
+	rkt := &Runtime{
 		systemd:             systemd,
 		rktBinAbsPath:       rktBinAbsPath,
 		config:              config,
@@ -151,11 +145,10 @@ func New(config *Config,
 		containerRefManager: containerRefManager,
 		generator:           generator,
 		recorder:            recorder,
-		readinessManager:    readinessManager,
+		prober:              prober,
 		volumeGetter:        volumeGetter,
 	}
-	rkt.prober = prober.New(rkt, readinessManager, containerRefManager, recorder)
-	rkt.imagePuller = kubecontainer.NewImagePuller(recorder, rkt)
+	rkt.imagePuller = kubecontainer.NewImagePuller(recorder, rkt, imageBackOff)
 
 	// Test the rkt version.
 	version, err := rkt.Version()
@@ -172,7 +165,7 @@ func New(config *Config,
 	return rkt, nil
 }
 
-func (r *runtime) buildCommand(args ...string) *exec.Cmd {
+func (r *Runtime) buildCommand(args ...string) *exec.Cmd {
 	cmd := exec.Command(r.rktBinAbsPath)
 	cmd.Args = append(cmd.Args, r.config.buildGlobalOptions()...)
 	cmd.Args = append(cmd.Args, args...)
@@ -181,7 +174,7 @@ func (r *runtime) buildCommand(args ...string) *exec.Cmd {
 
 // runCommand invokes rkt binary with arguments and returns the result
 // from stdout in a list of strings. Each string in the list is a line.
-func (r *runtime) runCommand(args ...string) ([]string, error) {
+func (r *Runtime) runCommand(args ...string) ([]string, error) {
 	glog.V(4).Info("rkt: Run command:", args)
 
 	var stdout, stderr bytes.Buffer
@@ -214,10 +207,10 @@ func rawValue(value string) *json.RawMessage {
 // rawValue converts the request, limit to *json.RawMessage
 func rawRequestLimit(request, limit string) *json.RawMessage {
 	if request == "" {
-		return rawValue(fmt.Sprintf(`{"limit":%q}`, limit))
+		request = limit
 	}
 	if limit == "" {
-		return rawValue(fmt.Sprintf(`{"request":%q}`, request))
+		limit = request
 	}
 	return rawValue(fmt.Sprintf(`{"request":%q,"limit":%q}`, request, limit))
 }
@@ -396,7 +389,7 @@ func parseImageName(image string) (string, string) {
 
 // getImageManifest invokes 'rkt image cat-manifest' to retrive the image manifest
 // for the image.
-func (r *runtime) getImageManifest(image string) (*appcschema.ImageManifest, error) {
+func (r *Runtime) getImageManifest(image string) (*appcschema.ImageManifest, error) {
 	var manifest appcschema.ImageManifest
 
 	repoToPull, tag := parseImageName(image)
@@ -415,12 +408,12 @@ func (r *runtime) getImageManifest(image string) (*appcschema.ImageManifest, err
 }
 
 // makePodManifest transforms a kubelet pod spec to the rkt pod manifest.
-func (r *runtime) makePodManifest(pod *api.Pod, pullSecrets []api.Secret) (*appcschema.PodManifest, error) {
+func (r *Runtime) makePodManifest(pod *api.Pod, pullSecrets []api.Secret) (*appcschema.PodManifest, error) {
 	var globalPortMappings []kubecontainer.PortMapping
 	manifest := appcschema.BlankPodManifest()
 
 	for _, c := range pod.Spec.Containers {
-		if err := r.imagePuller.PullImage(pod, &c, pullSecrets); err != nil {
+		if err, _ := r.imagePuller.PullImage(pod, &c, pullSecrets); err != nil {
 			return nil, err
 		}
 		imgManifest, err := r.getImageManifest(c.Image)
@@ -467,7 +460,7 @@ func (r *runtime) makePodManifest(pod *api.Pod, pullSecrets []api.Secret) (*appc
 
 	volumeMap, ok := r.volumeGetter.GetVolumes(pod.UID)
 	if !ok {
-		return nil, fmt.Errorf("cannot get the volumes for pod %q", kubeletUtil.FormatPodName(pod))
+		return nil, fmt.Errorf("cannot get the volumes for pod %q", kubeletutil.FormatPodName(pod))
 	}
 
 	// Set global volumes.
@@ -515,7 +508,7 @@ func apiPodToruntimePod(uuid string, pod *api.Pod) *kubecontainer.Pod {
 	for i := range pod.Spec.Containers {
 		c := &pod.Spec.Containers[i]
 		p.Containers = append(p.Containers, &kubecontainer.Container{
-			ID:      types.UID(buildContainerID(&containerID{uuid, c.Name})),
+			ID:      buildContainerID(&containerID{uuid, c.Name}),
 			Name:    c.Name,
 			Image:   c.Image,
 			Hash:    kubecontainer.HashContainer(c),
@@ -537,7 +530,7 @@ func serviceFilePath(serviceName string) string {
 //
 // On success, it will return a string that represents name of the unit file
 // and the runtime pod.
-func (r *runtime) preparePod(pod *api.Pod, pullSecrets []api.Secret) (string, *kubecontainer.Pod, error) {
+func (r *Runtime) preparePod(pod *api.Pod, pullSecrets []api.Secret) (string, *kubecontainer.Pod, error) {
 	// Generate the pod manifest from the pod spec.
 	manifest, err := r.makePodManifest(pod, pullSecrets)
 	if err != nil {
@@ -587,7 +580,7 @@ func (r *runtime) preparePod(pod *api.Pod, pullSecrets []api.Secret) (string, *k
 	}
 
 	var runPrepared string
-	if pod.Spec.HostNetwork {
+	if pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.HostNetwork {
 		runPrepared = fmt.Sprintf("%s run-prepared --mds-register=false %s", r.rktBinAbsPath, uuid)
 	} else {
 		runPrepared = fmt.Sprintf("%s run-prepared --mds-register=false --private-net %s", r.rktBinAbsPath, uuid)
@@ -623,7 +616,7 @@ func (r *runtime) preparePod(pod *api.Pod, pullSecrets []api.Secret) (string, *k
 	}
 	units = append(units, newUnitOption(unitKubernetesSection, unitRestartCount, strconv.Itoa(restartCount)))
 
-	glog.V(4).Infof("rkt: Creating service file %q for pod %q", serviceName, kubeletUtil.FormatPodName(pod))
+	glog.V(4).Infof("rkt: Creating service file %q for pod %q", serviceName, kubeletutil.FormatPodName(pod))
 	serviceFile, err := os.Create(serviceFilePath(serviceName))
 	if err != nil {
 		return "", nil, err
@@ -645,10 +638,10 @@ func (r *runtime) preparePod(pod *api.Pod, pullSecrets []api.Secret) (string, *k
 
 // generateEvents is a helper function that generates some container
 // life cycle events for containers in a pod.
-func (r *runtime) generateEvents(runtimePod *kubecontainer.Pod, reason string, failure error) {
+func (r *Runtime) generateEvents(runtimePod *kubecontainer.Pod, reason string, failure error) {
 	// Set up container references.
 	for _, c := range runtimePod.Containers {
-		containerID := string(c.ID)
+		containerID := c.ID
 		id, err := parseContainerID(containerID)
 		if err != nil {
 			glog.Warningf("Invalid container ID %q", containerID)
@@ -681,8 +674,8 @@ func (r *runtime) generateEvents(runtimePod *kubecontainer.Pod, reason string, f
 
 // RunPod first creates the unit file for a pod, and then
 // starts the unit over d-bus.
-func (r *runtime) RunPod(pod *api.Pod, pullSecrets []api.Secret) error {
-	glog.V(4).Infof("Rkt starts to run pod: name %q.", kubeletUtil.FormatPodName(pod))
+func (r *Runtime) RunPod(pod *api.Pod, pullSecrets []api.Secret) error {
+	glog.V(4).Infof("Rkt starts to run pod: name %q.", kubeletutil.FormatPodName(pod))
 
 	name, runtimePod, prepareErr := r.preparePod(pod, pullSecrets)
 
@@ -692,14 +685,14 @@ func (r *runtime) RunPod(pod *api.Pod, pullSecrets []api.Secret) error {
 	for i, c := range pod.Spec.Containers {
 		ref, err := kubecontainer.GenerateContainerRef(pod, &c)
 		if err != nil {
-			glog.Errorf("Couldn't make a ref to pod %q, container %v: '%v'", kubeletUtil.FormatPodName(pod), c.Name, err)
+			glog.Errorf("Couldn't make a ref to pod %q, container %v: '%v'", kubeletutil.FormatPodName(pod), c.Name, err)
 			continue
 		}
 		if prepareErr != nil {
 			r.recorder.Eventf(ref, "Failed", "Failed to create rkt container with error: %v", prepareErr)
 			continue
 		}
-		containerID := string(runtimePod.Containers[i].ID)
+		containerID := runtimePod.Containers[i].ID
 		r.containerRefManager.SetRef(containerID, ref)
 	}
 
@@ -724,7 +717,7 @@ func (r *runtime) RunPod(pod *api.Pod, pullSecrets []api.Secret) error {
 }
 
 // readServiceFile reads the service file and constructs the runtime pod and the rkt info.
-func (r *runtime) readServiceFile(serviceName string) (*kubecontainer.Pod, *rktInfo, error) {
+func (r *Runtime) readServiceFile(serviceName string) (*kubecontainer.Pod, *rktInfo, error) {
 	f, err := os.Open(serviceFilePath(serviceName))
 	if err != nil {
 		return nil, nil, err
@@ -771,7 +764,7 @@ func (r *runtime) readServiceFile(serviceName string) (*kubecontainer.Pod, *rktI
 // Then it will use the result to construct a list of container runtime pods.
 // If all is false, then only running pods will be returned, otherwise all pods will be
 // returned.
-func (r *runtime) GetPods(all bool) ([]*kubecontainer.Pod, error) {
+func (r *Runtime) GetPods(all bool) ([]*kubecontainer.Pod, error) {
 	glog.V(4).Infof("Rkt getting pods")
 
 	units, err := r.systemd.ListUnits()
@@ -798,28 +791,34 @@ func (r *runtime) GetPods(all bool) ([]*kubecontainer.Pod, error) {
 
 // KillPod invokes 'systemctl kill' to kill the unit that runs the pod.
 // TODO(yifan): Handle network plugin.
-func (r *runtime) KillPod(pod *api.Pod, runningPod kubecontainer.Pod) error {
+func (r *Runtime) KillPod(pod *api.Pod, runningPod kubecontainer.Pod) error {
 	glog.V(4).Infof("Rkt is killing pod: name %q.", runningPod.Name)
 
 	serviceName := makePodServiceFileName(runningPod.ID)
 	r.generateEvents(&runningPod, "Killing", nil)
 	for _, c := range runningPod.Containers {
-		id := string(c.ID)
-		r.containerRefManager.ClearRef(id)
+		r.containerRefManager.ClearRef(c.ID)
+	}
+
+	// Touch the systemd service file to update the mod time so it will
+	// not be garbage collected too soon.
+	if err := os.Chtimes(serviceFilePath(serviceName), time.Now(), time.Now()); err != nil {
+		glog.Errorf("rkt: Failed to change the modification time of the service file %q: %v", serviceName, err)
+		return err
 	}
 
 	// Since all service file have 'KillMode=mixed', the processes in
 	// the unit's cgroup will receive a SIGKILL if the normal stop timeouts.
 	if _, err := r.systemd.StopUnit(serviceName, "replace"); err != nil {
+		glog.Errorf("rkt: Failed to stop unit %q: %v", serviceName, err)
 		return err
 	}
-	// Remove the systemd service file as well.
-	return os.Remove(serviceFilePath(serviceName))
+	return nil
 }
 
 // getPodStatus reads the service file and invokes 'rkt status $UUID' to get the
 // pod's status.
-func (r *runtime) getPodStatus(serviceName string) (*api.PodStatus, error) {
+func (r *Runtime) getPodStatus(serviceName string) (*api.PodStatus, error) {
 	var status api.PodStatus
 
 	// TODO(yifan): Get rkt uuid from the service file name.
@@ -844,7 +843,7 @@ func (r *runtime) getPodStatus(serviceName string) (*api.PodStatus, error) {
 }
 
 // GetPodStatus returns the status of the given pod.
-func (r *runtime) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
+func (r *Runtime) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 	serviceName := makePodServiceFileName(pod.UID)
 	return r.getPodStatus(serviceName)
 }
@@ -856,7 +855,7 @@ func (r *runtime) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 // Example:
 // rkt:0.3.2+git --> []int{0, 3, 2}.
 //
-func (r *runtime) Version() (kubecontainer.Version, error) {
+func (r *Runtime) Version() (kubecontainer.Version, error) {
 	output, err := r.runCommand("version")
 	if err != nil {
 		return nil, err
@@ -880,7 +879,7 @@ func (r *runtime) Version() (kubecontainer.Version, error) {
 
 // TODO(yifan): This is very racy, unefficient, and unsafe, we need to provide
 // different namespaces. See: https://github.com/coreos/rkt/issues/836.
-func (r *runtime) writeDockerAuthConfig(image string, credsSlice []docker.AuthConfiguration) error {
+func (r *Runtime) writeDockerAuthConfig(image string, credsSlice []docker.AuthConfiguration) error {
 	if len(credsSlice) == 0 {
 		return nil
 	}
@@ -924,7 +923,7 @@ func (r *runtime) writeDockerAuthConfig(image string, credsSlice []docker.AuthCo
 //
 // http://issue.k8s.io/7203
 //
-func (r *runtime) PullImage(image kubecontainer.ImageSpec, pullSecrets []api.Secret) error {
+func (r *Runtime) PullImage(image kubecontainer.ImageSpec, pullSecrets []api.Secret) error {
 	img := image.Image
 	// TODO(yifan): The credential operation is a copy from dockertools package,
 	// Need to resolve the code duplication.
@@ -953,7 +952,7 @@ func (r *runtime) PullImage(image kubecontainer.ImageSpec, pullSecrets []api.Sec
 }
 
 // TODO(yifan): Searching the image via 'rkt images' might not be the most efficient way.
-func (r *runtime) IsImagePresent(image kubecontainer.ImageSpec) (bool, error) {
+func (r *Runtime) IsImagePresent(image kubecontainer.ImageSpec) (bool, error) {
 	repoToPull, tag := parseImageName(image.Image)
 	// Example output of 'rkt image list --fields=name':
 	//
@@ -987,11 +986,11 @@ func (r *runtime) IsImagePresent(image kubecontainer.ImageSpec) (bool, error) {
 }
 
 // SyncPod syncs the running pod to match the specified desired pod.
-func (r *runtime) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, podStatus api.PodStatus, pullSecrets []api.Secret, backOff *util.Backoff) error {
-	podFullName := kubeletUtil.FormatPodName(pod)
+func (r *Runtime) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, podStatus api.PodStatus, pullSecrets []api.Secret, backOff *util.Backoff) error {
+	podFullName := kubeletutil.FormatPodName(pod)
 
 	// Add references to all containers.
-	unidentifiedContainers := make(map[types.UID]*kubecontainer.Container)
+	unidentifiedContainers := make(map[kubecontainer.ContainerID]*kubecontainer.Container)
 	for _, c := range runningPod.Containers {
 		unidentifiedContainers[c.ID] = c
 	}
@@ -1002,7 +1001,7 @@ func (r *runtime) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, podStatus 
 
 		c := runningPod.FindContainerByName(container.Name)
 		if c == nil {
-			if kubecontainer.ShouldContainerBeRestarted(&container, pod, &podStatus, r.readinessManager) {
+			if kubecontainer.ShouldContainerBeRestarted(&container, pod, &podStatus) {
 				glog.V(3).Infof("Container %+v is dead, but RestartPolicy says that we should restart it.", container)
 				// TODO(yifan): Containers in one pod are fate-sharing at this moment, see:
 				// https://github.com/appc/spec/issues/276.
@@ -1022,9 +1021,9 @@ func (r *runtime) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, podStatus 
 			break
 		}
 
-		result, err := r.prober.Probe(pod, podStatus, container, string(c.ID), c.Created)
+		result, err := r.prober.ProbeLiveness(pod, podStatus, container, c.ID, c.Created)
 		// TODO(vmarmol): examine this logic.
-		if err == nil && result != probe.Success {
+		if err == nil && result != probe.Success && pod.Spec.RestartPolicy != api.RestartPolicyNever {
 			glog.Infof("Pod %q container %q is unhealthy (probe result: %v), it will be killed and re-created.", podFullName, container.Name, result)
 			restartPod = true
 			break
@@ -1064,7 +1063,7 @@ func (r *runtime) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, podStatus 
 // See https://github.com/coreos/rkt/blob/master/Documentation/commands.md#logging for more details.
 //
 // TODO(yifan): If the rkt is using lkvm as the stage1 image, then this function will fail.
-func (r *runtime) GetContainerLogs(pod *api.Pod, containerID string, logOptions *api.PodLogOptions, stdout, stderr io.Writer) error {
+func (r *Runtime) GetContainerLogs(pod *api.Pod, containerID kubecontainer.ContainerID, logOptions *api.PodLogOptions, stdout, stderr io.Writer) error {
 	id, err := parseContainerID(containerID)
 	if err != nil {
 		return err
@@ -1083,14 +1082,43 @@ func (r *runtime) GetContainerLogs(pod *api.Pod, containerID string, logOptions 
 	return cmd.Run()
 }
 
-// GarbageCollect collects the pods/containers. TODO(yifan): Enforce the gc policy.
-func (r *runtime) GarbageCollect() error {
+// GarbageCollect collects the pods/containers.
+// TODO(yifan): Enforce the gc policy, also, it would be better if we can
+// just GC kubernetes pods.
+func (r *Runtime) GarbageCollect(gcPolicy kubecontainer.ContainerGCPolicy) error {
 	if err := exec.Command("systemctl", "reset-failed").Run(); err != nil {
-		glog.Errorf("rkt: Failed to reset failed systemd services: %v", err)
+		glog.Errorf("rkt: Failed to reset failed systemd services: %v, continue to gc anyway...", err)
 	}
-	if _, err := r.runCommand("gc", "--grace-period="+defaultGracePeriod, "--expire-prepared="+defaultExpirePrepared); err != nil {
+
+	if _, err := r.runCommand("gc", "--grace-period="+gcPolicy.MinAge.String(), "--expire-prepared="+gcPolicy.MinAge.String()); err != nil {
 		glog.Errorf("rkt: Failed to gc: %v", err)
+	}
+
+	// GC all inactive systemd service files.
+	units, err := r.systemd.ListUnits()
+	if err != nil {
+		glog.Errorf("rkt: Failed to list units: %v", err)
 		return err
+	}
+	runningKubernetesUnits := sets.NewString()
+	for _, u := range units {
+		if strings.HasPrefix(u.Name, kubernetesUnitPrefix) && u.SubState == "running" {
+			runningKubernetesUnits.Insert(u.Name)
+		}
+	}
+
+	files, err := ioutil.ReadDir(systemdServiceDir)
+	if err != nil {
+		glog.Errorf("rkt: Failed to read the systemd service directory: %v", err)
+		return err
+	}
+	for _, f := range files {
+		if runningKubernetesUnits.Has(f.Name()) && f.ModTime().Before(time.Now().Add(-gcPolicy.MinAge)) {
+			glog.V(4).Infof("rkt: Removing inactive systemd service file: %v", f.Name())
+			if err := os.Remove(serviceFilePath(f.Name())); err != nil {
+				glog.Warningf("rkt: Failed to remove inactive systemd service file %v: %v", f.Name(), err)
+			}
+		}
 	}
 	return nil
 }
@@ -1098,7 +1126,7 @@ func (r *runtime) GarbageCollect() error {
 // Note: In rkt, the container ID is in the form of "UUID:appName", where
 // appName is the container name.
 // TODO(yifan): If the rkt is using lkvm as the stage1 image, then this function will fail.
-func (r *runtime) RunInContainer(containerID string, cmd []string) ([]byte, error) {
+func (r *Runtime) RunInContainer(containerID kubecontainer.ContainerID, cmd []string) ([]byte, error) {
 	glog.V(4).Infof("Rkt running in container.")
 
 	id, err := parseContainerID(containerID)
@@ -1108,18 +1136,35 @@ func (r *runtime) RunInContainer(containerID string, cmd []string) ([]byte, erro
 	args := append([]string{}, "enter", fmt.Sprintf("--app=%s", id.appName), id.uuid)
 	args = append(args, cmd...)
 
-	result, err := r.runCommand(args...)
-	return []byte(strings.Join(result, "\n")), err
+	result, err := r.buildCommand(args...).CombinedOutput()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			err = &rktExitError{exitErr}
+		}
+	}
+	return result, err
 }
 
-func (r *runtime) AttachContainer(containerID string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool) error {
+// rktExitError implemets /pkg/util/exec.ExitError interface.
+type rktExitError struct{ *exec.ExitError }
+
+var _ utilexec.ExitError = &rktExitError{}
+
+func (r *rktExitError) ExitStatus() int {
+	if status, ok := r.Sys().(syscall.WaitStatus); ok {
+		return status.ExitStatus()
+	}
+	return 0
+}
+
+func (r *Runtime) AttachContainer(containerID kubecontainer.ContainerID, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool) error {
 	return fmt.Errorf("unimplemented")
 }
 
 // Note: In rkt, the container ID is in the form of "UUID:appName", where UUID is
 // the rkt UUID, and appName is the container name.
 // TODO(yifan): If the rkt is using lkvm as the stage1 image, then this function will fail.
-func (r *runtime) ExecInContainer(containerID string, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool) error {
+func (r *Runtime) ExecInContainer(containerID kubecontainer.ContainerID, cmd []string, stdin io.Reader, stdout, stderr io.WriteCloser, tty bool) error {
 	glog.V(4).Infof("Rkt execing in container.")
 
 	id, err := parseContainerID(containerID)
@@ -1171,7 +1216,7 @@ func (r *runtime) ExecInContainer(containerID string, cmd []string, stdin io.Rea
 }
 
 // findRktID returns the rkt uuid for the pod.
-func (r *runtime) findRktID(pod *kubecontainer.Pod) (string, error) {
+func (r *Runtime) findRktID(pod *kubecontainer.Pod) (string, error) {
 	serviceName := makePodServiceFileName(pod.ID)
 
 	f, err := os.Open(serviceFilePath(serviceName))
@@ -1207,7 +1252,7 @@ func (r *runtime) findRktID(pod *kubecontainer.Pod) (string, error) {
 //
 // TODO(yifan): Merge with the same function in dockertools.
 // TODO(yifan): If the rkt is using lkvm as the stage1 image, then this function will fail.
-func (r *runtime) PortForward(pod *kubecontainer.Pod, port uint16, stream io.ReadWriteCloser) error {
+func (r *Runtime) PortForward(pod *kubecontainer.Pod, port uint16, stream io.ReadWriteCloser) error {
 	glog.V(4).Infof("Rkt port forwarding in container.")
 
 	rktID, err := r.findRktID(pod)
@@ -1267,7 +1312,7 @@ func isUUID(input string) bool {
 
 // getPodInfo returns the pod info of a single pod according
 // to the uuid.
-func (r *runtime) getPodInfo(uuid string) (*podInfo, error) {
+func (r *Runtime) getPodInfo(uuid string) (*podInfo, error) {
 	status, err := r.runCommand("status", uuid)
 	if err != nil {
 		return nil, err
@@ -1283,7 +1328,7 @@ func (r *runtime) getPodInfo(uuid string) (*podInfo, error) {
 // TODO(yifan): Replace with 'rkt image cat-manifest'.
 // imageName should be in the form of 'example.com/app:latest', which should matches
 // the result of 'rkt image list'. If the version is empty, then 'latest' is assumed.
-func (r *runtime) getImageByName(imageName string) (*kubecontainer.Image, error) {
+func (r *Runtime) getImageByName(imageName string) (*kubecontainer.Image, error) {
 	// TODO(yifan): Print hash in 'rkt image cat-manifest'?
 	images, err := r.ListImages()
 	if err != nil {
@@ -1311,7 +1356,7 @@ func (r *runtime) getImageByName(imageName string) (*kubecontainer.Image, error)
 }
 
 // ListImages lists all the available appc images on the machine by invoking 'rkt image list'.
-func (r *runtime) ListImages() ([]kubecontainer.Image, error) {
+func (r *Runtime) ListImages() ([]kubecontainer.Image, error) {
 	// Example output of 'rkt image list --fields=key,name':
 	//
 	// KEY									        NAME
@@ -1357,7 +1402,7 @@ func parseImageInfo(input string) (*kubecontainer.Image, error) {
 
 // RemoveImage removes an on-disk image using 'rkt image rm'.
 // TODO(yifan): Use image ID to reference image.
-func (r *runtime) RemoveImage(image kubecontainer.ImageSpec) error {
+func (r *Runtime) RemoveImage(image kubecontainer.ImageSpec) error {
 	img, err := r.getImageByName(image.Image)
 	if err != nil {
 		return err

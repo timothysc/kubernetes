@@ -238,6 +238,11 @@
 			"Rev": "3dcc96556217539f50599357fb481ac0dc7439b9"
 		},
 		{
+			"ImportPath": "github.com/elazarl/goproxy",
+			"Comment": "v1.0-66-g07b16b6",
+			"Rev": "07b16b6e30fcac0ad8c0435548e743bcf2ca7e92"
+		},
+		{
 			"ImportPath": "github.com/emicklei/go-restful",
 			"Comment": "v1.1.3-98-g1f9a0ee",
 			"Rev": "1f9a0ee00ff93717a275e15b30cf7df356255877"
@@ -248,7 +253,7 @@
 		},
 		{
 			"ImportPath": "github.com/fsouza/go-dockerclient",
-			"Rev": "76fd6c68cf24c48ee6a2b25def997182a29f940e"
+			"Rev": "1399676f53e6ccf46e0bf00751b21bed329bc60e"
 		},
 		{
 			"ImportPath": "github.com/garyburd/redigo/internal",
@@ -488,29 +493,22 @@
 			"Rev": "ca53cad383cad2479bbba7f7a1a05797ec1386e4"
 		},
 		{
-			"ImportPath": "github.com/prometheus/client_golang/extraction",
-			"Comment": "0.4.0-1-g692492e",
-			"Rev": "692492e54b553a81013254cc1fba4b6dd76fad30"
-		},
-		{
-			"ImportPath": "github.com/prometheus/client_golang/model",
-			"Comment": "0.4.0-1-g692492e",
-			"Rev": "692492e54b553a81013254cc1fba4b6dd76fad30"
-		},
-		{
 			"ImportPath": "github.com/prometheus/client_golang/prometheus",
-			"Comment": "0.4.0-1-g692492e",
-			"Rev": "692492e54b553a81013254cc1fba4b6dd76fad30"
-		},
-		{
-			"ImportPath": "github.com/prometheus/client_golang/text",
-			"Comment": "0.4.0-1-g692492e",
-			"Rev": "692492e54b553a81013254cc1fba4b6dd76fad30"
+			"Comment": "0.7.0-39-g3b78d7a",
+			"Rev": "3b78d7a77f51ccbc364d4bc170920153022cfd08"
 		},
 		{
 			"ImportPath": "github.com/prometheus/client_model/go",
 			"Comment": "model-0.0.2-12-gfa8ad6f",
 			"Rev": "fa8ad6fec33561be4280a8f0514318c79d7f6cb6"
+		},
+		{
+			"ImportPath": "github.com/prometheus/common/expfmt",
+			"Rev": "ef7a9a5fb138aa5d3a19988537606226869a0390"
+		},
+		{
+			"ImportPath": "github.com/prometheus/common/model",
+			"Rev": "ef7a9a5fb138aa5d3a19988537606226869a0390"
 		},
 		{
 			"ImportPath": "github.com/prometheus/procfs",
@@ -545,12 +543,11 @@
 		},
 		{
 			"ImportPath": "github.com/spf13/cobra",
-			"Rev": "68f5a81a722d56241bd70faf6860ceb05eb27d64"
+			"Rev": "d732ab3a34e6e9e6b5bdac80707c2b6bad852936"
 		},
 		{
 			"ImportPath": "github.com/spf13/pflag",
-			"Comment": "v0.0.1-99-g8e7dc10",
-			"Rev": "8e7dc108ab3a1ab6ce6d922bbaff5657b88e8e49"
+			"Rev": "b084184666e02084b8ccb9b704bf0d79c466eb1d"
 		},
 		{
 			"ImportPath": "github.com/stretchr/objx",
@@ -577,7 +574,7 @@
 		},
 		{
 			"ImportPath": "github.com/ugorji/go/codec",
-			"Rev": "821cda7e48749cacf7cad2c6ed01e96457ca7e9d"
+			"Rev": "8a2a3a8c488c3ebd98f422a965260278267a0551"
 		},
 		{
 			"ImportPath": "github.com/vaughan0/go-ini",
