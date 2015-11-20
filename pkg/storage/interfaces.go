@@ -69,6 +69,15 @@ func Everything(runtime.Object) bool {
 // See the comment for GuaranteedUpdate for more details.
 type UpdateFunc func(input runtime.Object, res ResponseMeta) (output runtime.Object, ttl *uint64, err error)
 
+
+type StorageErrors interface {
+   Exists(err error) bool
+   NotFound(err error) bool
+   TestFailed(err error) bool 
+   WatchExpired(err error) bool
+   Unreachable(err error) bool
+}
+
 // Interface offers a common interface for object marshaling/unmarshling operations and
 // hides all the storage-related operations behind it.
 type Interface interface {
@@ -148,4 +157,10 @@ type Interface interface {
 
 	// Codec provides access to the underlying codec being used by the implementation.
 	Codec() runtime.Codec
+	
+	//GetVersion(host string) 
+	
+	Errors
 }
+
+

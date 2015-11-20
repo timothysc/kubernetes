@@ -23,34 +23,52 @@ import (
 	"net/http"
 	"os/exec"
 
-	goetcd "github.com/coreos/go-etcd/etcd"
+	etcd "github.com/coreos/etcd/client"
 	"github.com/golang/glog"
-	"k8s.io/kubernetes/pkg/tools"
+)
+
+// TODO we should really rid some of this from the code and provide 
+const (
+	EtcdErrorCodeNotFound      = 100
+	EtcdErrorCodeTestFailed    = 101
+	EtcdErrorCodeNodeExist     = 105
+	EtcdErrorCodeValueRequired = 200
+	EtcdErrorCodeWatchExpired  = 401
+	EtcdErrorCodeUnreachable   = 501
+)
+
+var (
+	EtcdErrorNotFound      = &etcd.EtcdError{ErrorCode: EtcdErrorCodeNotFound}
+	EtcdErrorTestFailed    = &etcd.EtcdError{ErrorCode: EtcdErrorCodeTestFailed}
+	EtcdErrorNodeExist     = &etcd.EtcdError{ErrorCode: EtcdErrorCodeNodeExist}
+	EtcdErrorValueRequired = &etcd.EtcdError{ErrorCode: EtcdErrorCodeValueRequired}
+	EtcdErrorWatchExpired  = &etcd.EtcdError{ErrorCode: EtcdErrorCodeWatchExpired}
+	EtcdErrorUnreachable   = &etcd.EtcdError{ErrorCode: EtcdErrorCodeUnreachable}
 )
 
 // IsEtcdNotFound returns true if and only if err is an etcd not found error.
 func IsEtcdNotFound(err error) bool {
-	return isEtcdErrorNum(err, tools.EtcdErrorCodeNotFound)
+	return isEtcdErrorNum(err, EtcdErrorCodeNotFound)
 }
 
 // IsEtcdNodeExist returns true if and only if err is an etcd node already exist error.
 func IsEtcdNodeExist(err error) bool {
-	return isEtcdErrorNum(err, tools.EtcdErrorCodeNodeExist)
+	return isEtcdErrorNum(err, EtcdErrorCodeNodeExist)
 }
 
 // IsEtcdTestFailed returns true if and only if err is an etcd write conflict.
 func IsEtcdTestFailed(err error) bool {
-	return isEtcdErrorNum(err, tools.EtcdErrorCodeTestFailed)
+	return isEtcdErrorNum(err, EtcdErrorCodeTestFailed)
 }
 
 // IsEtcdWatchExpired returns true if and only if err indicates the watch has expired.
 func IsEtcdWatchExpired(err error) bool {
-	return isEtcdErrorNum(err, tools.EtcdErrorCodeWatchExpired)
+	return isEtcdErrorNum(err, EtcdErrorCodeWatchExpired)
 }
 
 // IsEtcdUnreachable returns true if and only if err indicates the server could not be reached.
 func IsEtcdUnreachable(err error) bool {
-	return isEtcdErrorNum(err, tools.EtcdErrorCodeUnreachable)
+	return isEtcdErrorNum(err, EtcdErrorCodeUnreachable)
 }
 
 // IsEtcdWatchStoppedByUser returns true if and only if err is a client triggered stop.
@@ -89,29 +107,6 @@ func GetEtcdVersion(host string) (string, error) {
 		return "", err
 	}
 	return string(versionBytes), nil
-}
-
-func startEtcd() (*exec.Cmd, error) {
-	cmd := exec.Command("etcd")
-	err := cmd.Start()
-	if err != nil {
-		return nil, err
-	}
-	return cmd, nil
-}
-
-func NewEtcdClientStartServerIfNecessary(server string) (tools.EtcdClient, error) {
-	_, err := GetEtcdVersion(server)
-	if err != nil {
-		glog.Infof("Failed to find etcd, attempting to start.")
-		_, err := startEtcd()
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	servers := []string{server}
-	return goetcd.NewClient(servers), nil
 }
 
 type etcdHealth struct {

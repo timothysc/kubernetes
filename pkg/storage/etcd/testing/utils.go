@@ -26,22 +26,20 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/kubernetes/pkg/tools"
-
 	"github.com/coreos/etcd/etcdserver"
 	"github.com/coreos/etcd/etcdserver/etcdhttp"
 	"github.com/coreos/etcd/pkg/transport"
 	"github.com/coreos/etcd/pkg/types"
 	"github.com/coreos/etcd/rafthttp"
-	goetcd "github.com/coreos/go-etcd/etcd"
+	etcd "github.com/coreos/etcd/client"
 )
 
 // EtcdTestServer encapsulates the datastructures needed to start local instance for testing
 type EtcdTestServer struct {
 	etcdserver.ServerConfig
 	PeerListeners, ClientListeners []net.Listener
-	Client                         tools.EtcdClient
-
+	Client                         etcd.Client
+	
 	raftHandler http.Handler
 	s           *etcdserver.EtcdServer
 	hss         []*httptest.Server
