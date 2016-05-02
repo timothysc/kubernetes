@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/golang/glog"
+	"golang.org/x/net/http2"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/unversioned"
@@ -157,6 +158,10 @@ func RESTClientFor(config *Config) (*RESTClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	
+	if err = http2.ConfigureTransport(transport); err != nil {
+		return nil, err
+	}
 
 	var httpClient *http.Client
 	if transport != http.DefaultTransport {
@@ -182,6 +187,10 @@ func UnversionedRESTClientFor(config *Config) (*RESTClient, error) {
 
 	transport, err := TransportFor(config)
 	if err != nil {
+		return nil, err
+	}
+	
+	if err = http2.ConfigureTransport(transport); err != nil {
 		return nil, err
 	}
 
