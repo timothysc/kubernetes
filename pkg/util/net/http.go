@@ -26,6 +26,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	
+	"github.com/golang/glog"
+	"golang.org/x/net/http2"
 )
 
 // IsProbableEOF returns true if the given error resembles a connection termination
@@ -66,6 +69,9 @@ func SetTransportDefaults(t *http.Transport) *http.Transport {
 	}
 	if t.TLSHandshakeTimeout == 0 {
 		t.TLSHandshakeTimeout = defaultTransport.TLSHandshakeTimeout
+	}
+	if err := http2.ConfigureTransport(t); err != nil {
+		glog.Warningf("Transport Failed http2 configuration: %v", err)
 	}
 	return t
 }
