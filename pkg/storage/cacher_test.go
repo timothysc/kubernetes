@@ -355,8 +355,10 @@ func TestFiltering(t *testing.T) {
 func TestStartingResourceVersion(t *testing.T) {
 	server, etcdStorage := newEtcdTestStorage(t, testapi.Default.Codec(), etcdtest.PathPrefix())
 	defer server.Terminate(t)
-	cacher := newTestCacher(etcdStorage)
-	defer cacher.Stop()
+	
+	// disable start here to show cache miss
+	//cacher := newTestCacher(etcdStorage)
+	//defer cacher.Stop()
 
 	// add 1 object
 	podFoo := makeTestPod("foo")
@@ -367,14 +369,14 @@ func TestStartingResourceVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unexpected error: %v", err)
 	}
+	
+	// The following is a mod to simulate reflector behavior of updates that occur 
+	// between a watch break. 
+	before := rv
+	startVersion := strconv.Itoa(int(rv+1))
+	t.Logf("Your Actual Starting Version is before the addition = %v", startVersion) 	
+	
 	rv += 10
-	startVersion := strconv.Itoa(int(rv))
-
-	watcher, err := cacher.Watch(context.TODO(), "pods/ns/foo", startVersion, storage.Everything)
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
-	}
-	defer watcher.Stop()
 
 	lastFoo := fooCreated
 	for i := 0; i < 11; i++ {
@@ -382,20 +384,36 @@ func TestStartingResourceVersion(t *testing.T) {
 		podFooForUpdate.Labels = map[string]string{"foo": strconv.Itoa(i)}
 		lastFoo = updatePod(t, etcdStorage, podFooForUpdate, lastFoo)
 	}
-
-	select {
-	case e := <-watcher.ResultChan():
-		pod := e.Object.(*api.Pod)
-		podRV, err := storage.ParseWatchResourceVersion(pod.ResourceVersion)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		// event should have at least rv + 1, since we're starting the watch at rv
-		if podRV <= rv {
-			t.Errorf("expected event with resourceVersion of at least %d, got %d", rv+1, podRV)
-		}
-	case <-time.After(wait.ForeverTestTimeout):
-		t.Errorf("timed out waiting for event")
+	
+	// move cache start to here.  updates should not be in the cache 
+	cacher := newTestCacher(etcdStorage)
+	defer cacher.Stop()
+	
+	// start the watch on a previous version after mods have been appliec., same issue applies to native etcd client.
+	watcher, err := cacher.Watch(context.TODO(), "pods/ns/foo", startVersion, storage.Everything)
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
 	}
+	defer watcher.Stop()
+    
+	for i := 0; i < 10; i++ {
+		select {
+		case e := <-watcher.ResultChan():
+			//pod := e.Object.(*api.Pod);
+			//podRV, err := storage.ParseWatchResourceVersion(pod.ResourceVersion)
+			//if err != nil {
+			//		t.Fatalf("unexpected error: %v", err)
+			//}
+				
+			t.Logf("Got event %#v = %#v",e, e.Object)
+			rv = rv -1 
+	
+		case <-time.After(wait.ForeverTestTimeout):
+			t.Errorf("timed out waiting for event")
+		}
+	}
+	
+	// FORCE exit to debug issue.
+	t.Errorf("Before %d, After %d",before,rv )
+	
 }
