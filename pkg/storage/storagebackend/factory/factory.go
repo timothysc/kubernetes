@@ -27,9 +27,9 @@ import (
 // Create creates a storage backend based on given config.
 func Create(c storagebackend.Config, codec runtime.Codec) (storage.Interface, error) {
 	switch c.Type {
-	case storagebackend.StorageTypeUnset, storagebackend.StorageTypeETCD2:
+	case storagebackend.StorageTypeETCD2:
 		return newETCD2Storage(c, codec)
-	case storagebackend.StorageTypeETCD3:
+	case storagebackend.StorageTypeUnset, storagebackend.StorageTypeETCD3:
 		// TODO: We have the following features to implement:
 		// - Support secure connection by using key, cert, and CA files.
 		// - Honor "https" scheme to support secure connection in gRPC.
