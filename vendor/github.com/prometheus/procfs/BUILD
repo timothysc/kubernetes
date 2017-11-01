@@ -14,7 +14,6 @@ go_library(
         "proc_limits.go",
         "proc_stat.go",
         "stat.go",
-        "xfrm.go",
     ],
     importpath = "github.com/prometheus/procfs",
     visibility = ["//visibility:public"],

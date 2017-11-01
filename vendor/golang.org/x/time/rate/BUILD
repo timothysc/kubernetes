@@ -5,7 +5,6 @@ go_library(
     srcs = ["rate.go"],
     importpath = "golang.org/x/time/rate",
     visibility = ["//visibility:public"],
-    deps = ["//vendor/golang.org/x/net/context:go_default_library"],
 )
 
 filegroup(
